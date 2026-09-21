@@ -1014,7 +1014,35 @@ class OverlayWindowController(
         spSeekBarY = picker.findViewById(R.id.sp_picker_seek_y)
         spTextX = picker.findViewById(R.id.sp_picker_x_text)
         spTextY = picker.findViewById(R.id.sp_picker_y_text)
-        setupLogDrag(picker.findViewById(R.id.sp_picker_drag), lp)
+        val dragHandle = picker.findViewById<View>(R.id.sp_picker_drag)
+        var spStartX = 0
+        var spStartY = 0
+        var spTouchX = 0f
+        var spTouchY = 0f
+        dragHandle.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    spStartX = lp.x
+                    spStartY = lp.y
+                    spTouchX = event.rawX
+                    spTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    lp.x = spStartX + (event.rawX - spTouchX).toInt()
+                    lp.y = spStartY + (event.rawY - spTouchY).toInt()
+                    val screen = screenSize()
+                    lp.x = lp.x.coerceIn(0, (screen.first - picker.width).coerceAtLeast(0))
+                    lp.y = lp.y.coerceIn(0, (screen.second - picker.height).coerceAtLeast(0))
+                    try {
+                        windowManager.updateViewLayout(picker, lp)
+                    } catch (_: Throwable) {
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
         picker.findViewById<View>(R.id.sp_picker_close).setOnClickListener { hideSkipPositionPicker() }
         picker.findViewById<View>(R.id.sp_picker_cancel).setOnClickListener { hideSkipPositionPicker() }
         picker.findViewById<View>(R.id.sp_picker_ok).setOnClickListener {
