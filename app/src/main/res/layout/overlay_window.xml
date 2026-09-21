@@ -356,7 +356,7 @@
             </LinearLayout>
 
             <LinearLayout
-                android:id="@+id/overlay_row_smart_optionid:id="@+id/overlay_row_smart_option"
+                android:id="@+id/overlay_row_smart_option"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
