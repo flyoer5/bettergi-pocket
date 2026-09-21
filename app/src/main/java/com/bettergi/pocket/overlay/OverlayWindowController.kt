@@ -238,16 +238,9 @@ class OverlayWindowController(
         rowAutoSkip = root.findViewById(R.id.overlay_row_auto_skip)
         rowQuickSkip = root.findViewById(R.id.overlay_row_quick_skip)
         rowQuickSkipPosition = root.findViewById(R.id.overlay_row_quick_skip_position)
-        spChevron = root.findViewById(R.id.overlay_quick_skip_position_chevron)
         spStatus = root.findViewById(R.id.overlay_quick_skip_position_status)
         spReset = root.findViewById(R.id.overlay_quick_skip_position_reset)
-        rowQuickSkipPosition?.setOnClickListener {
-            if (spPickerView != null) {
-                hideSkipPositionPicker()
-            } else {
-                showSkipPositionPicker()
-            }
-        }
+        rowQuickSkipPosition?.setOnClickListener { showSkipPositionPicker() }
         spReset?.setOnClickListener { settingsRepository.resetQuickSkipPosition() }
         rowSmartOption = root.findViewById(R.id.overlay_row_smart_option)
         rowBlackScreen = root.findViewById(R.id.overlay_row_black_screen)
@@ -1087,7 +1080,6 @@ class OverlayWindowController(
             windowManager.addView(container, chLp)
             windowManager.addView(picker, lp)
             updateCrosshairOffset()
-            spChevron?.animate()?.rotation(90f)?.setDuration(160)?.start()
         } catch (_: Throwable) {
             hideSkipPositionPicker()
         }
@@ -1114,7 +1106,6 @@ class OverlayWindowController(
         spSeekBarY = null
         spTextX = null
         spTextY = null
-        spChevron?.animate()?.rotation(0f)?.setDuration(160)?.start()
     }
 
     private fun syncSpControls() {
