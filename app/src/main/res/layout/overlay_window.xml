@@ -322,6 +322,14 @@
                 android:paddingEnd="4dp"
                 android:paddingBottom="4dp">
 
+                <ImageView
+                    android:id="@+id/overlay_quick_skip_position_chevron"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:layout_marginStart="4dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_overlay_chevron" />
+
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
