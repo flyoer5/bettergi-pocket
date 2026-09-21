@@ -10,4 +10,7 @@ data class TriggerSettings(
     val blackScreenClickEnabled: Boolean = true,
     val showTapIndicator: Boolean = false,
     val exclamationClickEnabled: Boolean = true,
+    val quickSkipCustomPosition: Boolean = false,
+    val quickSkipPositionX: Float = 0.5f,
+    val quickSkipPositionY: Float = 0.99f,
 )

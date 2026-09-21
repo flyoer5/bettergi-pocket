@@ -61,6 +61,20 @@ class TriggerSettingsRepository(context: Context) {
         update { it.copy(exclamationClickEnabled = enabled) }
     }
 
+    fun setQuickSkipPosition(x: Float, y: Float) {
+        update {
+            it.copy(
+                quickSkipCustomPosition = true,
+                quickSkipPositionX = x.coerceIn(0.05f, 0.95f),
+                quickSkipPositionY = y.coerceIn(0.05f, 0.95f),
+            )
+        }
+    }
+
+    fun resetQuickSkipPosition() {
+        update { it.copy(quickSkipCustomPosition = false) }
+    }
+
 
 
     private fun update(transform: (TriggerSettings) -> TriggerSettings) {
@@ -81,6 +95,9 @@ class TriggerSettingsRepository(context: Context) {
                 .putBoolean(KEY_BLACK_SCREEN, updated.blackScreenClickEnabled)
                 .putBoolean(KEY_TAP_INDICATOR, updated.showTapIndicator)
                 .putBoolean(KEY_EXCLAMATION, updated.exclamationClickEnabled)
+                .putBoolean(KEY_QUICK_SKIP_CUSTOM, updated.quickSkipCustomPosition)
+                .putFloat(KEY_QUICK_SKIP_X, updated.quickSkipPositionX)
+                .putFloat(KEY_QUICK_SKIP_Y, updated.quickSkipPositionY)
                 .apply()
         }
         listeners.forEach { listener ->
@@ -98,6 +115,9 @@ class TriggerSettingsRepository(context: Context) {
         blackScreenClickEnabled = prefs.getBoolean(KEY_BLACK_SCREEN, true),
         showTapIndicator = prefs.getBoolean(KEY_TAP_INDICATOR, false),
         exclamationClickEnabled = prefs.getBoolean(KEY_EXCLAMATION, true),
+        quickSkipCustomPosition = prefs.getBoolean(KEY_QUICK_SKIP_CUSTOM, false),
+        quickSkipPositionX = prefs.getFloat(KEY_QUICK_SKIP_X, 0.5f),
+        quickSkipPositionY = prefs.getFloat(KEY_QUICK_SKIP_Y, 0.99f),
     )
 
     private companion object {
@@ -111,5 +131,8 @@ class TriggerSettingsRepository(context: Context) {
         const val KEY_BLACK_SCREEN = "blackScreenClickEnabled"
         const val KEY_TAP_INDICATOR = "showTapIndicator"
         const val KEY_EXCLAMATION = "exclamationClickEnabled"
+        const val KEY_QUICK_SKIP_CUSTOM = "quickSkipCustomPosition"
+        const val KEY_QUICK_SKIP_X = "quickSkipPositionX"
+        const val KEY_QUICK_SKIP_Y = "quickSkipPositionY"
     }
 }

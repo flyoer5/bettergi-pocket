@@ -83,7 +83,12 @@ class AutoSkipFeature(
                 events?.onTalkHistoryMatched()
 
                 if (settings.quickSkipDialogueEnabled) {
-                    val (skipX, skipY) = screenBottomCenter(tick.screenWidth, tick.screenHeight)
+                    val (skipX, skipY) = if (settings.quickSkipCustomPosition) {
+                        (tick.screenWidth * settings.quickSkipPositionX).toInt().coerceIn(0, tick.screenWidth) to
+                            (tick.screenHeight * settings.quickSkipPositionY).toInt().coerceIn(0, tick.screenHeight)
+                    } else {
+                        screenBottomCenter(tick.screenWidth, tick.screenHeight)
+                    }
                     val skipNow = System.currentTimeMillis()
                     if (skipNow - lastSkipLogMs >= SKIP_LOG_INTERVAL_MS) {
                         lastSkipLogMs = skipNow

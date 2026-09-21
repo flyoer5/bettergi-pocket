@@ -22,6 +22,8 @@ import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
+import android.widget.FrameLayout
+import android.widget.SeekBar
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
@@ -114,6 +116,17 @@ class OverlayWindowController(
     private var logToggleButton: ImageButton? = null
     private var rowAutoSkip: View? = null
     private var rowQuickSkip: View? = null
+    private var rowQuickSkipPosition: View? = null
+    private var spStatus: TextView? = null
+    private var spReset: TextView? = null
+    private var spPickerView: View? = null
+    private var spCrosshairView: View? = null
+    private var spSeekBarX: SeekBar? = null
+    private var spSeekBarY: SeekBar? = null
+    private var spTextX: TextView? = null
+    private var spTextY: TextView? = null
+    @Volatile private var spTempX: Float = 0.5f
+    @Volatile private var spTempY: Float = 0.99f
     private var rowSmartOption: View? = null
     private var rowBlackScreen: View? = null
     private var rowAutoPick: View? = null
@@ -157,6 +170,11 @@ class OverlayWindowController(
             switchEnabled?.isChecked = settings.screenShareEnabled
             switchAutoSkip?.isChecked = settings.autoSkipEnabled
             switchQuickSkip?.isChecked = settings.quickSkipDialogueEnabled
+            spStatus?.text = if (settings.quickSkipCustomPosition) {
+                "自定义 ${(settings.quickSkipPositionX * 100).toInt()}%,${(settings.quickSkipPositionY * 100).toInt()}%"
+            } else {
+                "默认（屏幕底部中央）"
+            }
             switchSmartOption?.isChecked = settings.smartOptionEnabled
             switchBlackScreen?.isChecked = settings.blackScreenClickEnabled
             switchTapIndicator?.isChecked = settings.showTapIndicator
@@ -218,6 +236,11 @@ class OverlayWindowController(
         logToggleButton = logToggle
         rowAutoSkip = root.findViewById(R.id.overlay_row_auto_skip)
         rowQuickSkip = root.findViewById(R.id.overlay_row_quick_skip)
+        rowQuickSkipPosition = root.findViewById(R.id.overlay_row_quick_skip_position)
+        spStatus = root.findViewById(R.id.overlay_quick_skip_position_status)
+        spReset = root.findViewById(R.id.overlay_quick_skip_position_reset)
+        rowQuickSkipPosition?.setOnClickListener { showSkipPositionPicker() }
+        spReset?.setOnClickListener { settingsRepository.resetQuickSkipPosition() }
         rowSmartOption = root.findViewById(R.id.overlay_row_smart_option)
         rowBlackScreen = root.findViewById(R.id.overlay_row_black_screen)
         rowTapIndicator = root.findViewById(R.id.overlay_row_tap_indicator)
@@ -431,6 +454,10 @@ class OverlayWindowController(
         logToggleButton = null
         rowAutoSkip = null
         rowQuickSkip = null
+        hideSkipPositionPicker()
+        rowQuickSkipPosition = null
+        spStatus = null
+        spReset = null
         rowSmartOption = null
         rowBlackScreen = null
         rowAutoPick = null
@@ -873,6 +900,113 @@ class OverlayWindowController(
         logText = null
         logScroll = null
         logLines.clear()
+    }
+
+    private fun showSkipPositionPicker() {
+        if (spPickerView != null) return
+        val screen = screenSize()
+        val settings = settingsRepository.get()
+        spTempX = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionX else 0.5f).coerceIn(0.05f, 0.95f)
+        spTempY = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionY else 0.99f).coerceIn(0.05f, 0.95f)
+        val container = FrameLayout(themedContext)
+        val crosshair = View(themedContext).apply {
+            background = ContextCompat.getDrawable(themedContext, R.drawable.crosshair)
+        }
+        container.addView(crosshair, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER))
+        crosshair.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    spTempX = (e.rawX / screen.first).coerceIn(0.05f, 0.95f)
+                    spTempY = (e.rawY / screen.second).coerceIn(0.05f, 0.95f)
+                    syncSpControls()
+                    true
+                }
+                else -> false
+            }
+        }
+        spCrosshairView = crosshair
+        val chLp = overlayParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, true, 0, 0)
+        val picker = LayoutInflater.from(themedContext).inflate(R.layout.overlay_skip_position_picker, null)
+        spPickerView = picker
+        val (dx, dy) = defaultLogPosition()
+        val lp = overlayParams(dp(240), WindowManager.LayoutParams.WRAP_CONTENT, true, dx, dy)
+        spSeekBarX = picker.findViewById(R.id.sp_picker_seek_x)
+        spSeekBarY = picker.findViewById(R.id.sp_picker_seek_y)
+        spTextX = picker.findViewById(R.id.sp_picker_x_text)
+        spTextY = picker.findViewById(R.id.sp_picker_y_text)
+        var spStartX = 0
+        var spStartY = 0
+        var spTouchX = 0f
+        var spTouchY = 0f
+        picker.findViewById<View>(R.id.sp_picker_drag).setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    spStartX = lp.x; spStartY = lp.y; spTouchX = event.rawX; spTouchY = event.rawY; true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    lp.x = (spStartX + (event.rawX - spTouchX).toInt()).coerceIn(0, (screen.first - picker.width).coerceAtLeast(0))
+                    lp.y = (spStartY + (event.rawY - spTouchY).toInt()).coerceIn(0, (screen.second - picker.height).coerceAtLeast(0))
+                    try { windowManager.updateViewLayout(picker, lp) } catch (_: Throwable) {}
+                    true
+                }
+                else -> false
+            }
+        }
+        picker.findViewById<View>(R.id.sp_picker_close).setOnClickListener { hideSkipPositionPicker() }
+        picker.findViewById<View>(R.id.sp_picker_cancel).setOnClickListener { hideSkipPositionPicker() }
+        picker.findViewById<View>(R.id.sp_picker_ok).setOnClickListener {
+            settingsRepository.setQuickSkipPosition(spTempX, spTempY)
+            hideSkipPositionPicker()
+        }
+        picker.findViewById<View>(R.id.sp_picker_test).setOnClickListener {
+            flashTap((screen.first * spTempX).toInt(), (screen.second * spTempY).toInt())
+        }
+        val seek = object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val ratio = 0.05f + progress / 90f * 0.9f
+                when (seekBar?.id) {
+                    R.id.sp_picker_seek_x -> { spTempX = ratio; spTextX?.text = "${(ratio * 100).toInt()}%" }
+                    R.id.sp_picker_seek_y -> { spTempY = ratio; spTextY?.text = "${(ratio * 100).toInt()}%" }
+                }
+                updateCrosshairOffset()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        }
+        spSeekBarX?.setOnSeekBarChangeListener(seek)
+        spSeekBarY?.setOnSeekBarChangeListener(seek)
+        syncSpControls()
+        try {
+            windowManager.addView(container, chLp)
+            windowManager.addView(picker, lp)
+        } catch (_: Throwable) {
+            hideSkipPositionPicker()
+        }
+    }
+
+    private fun hideSkipPositionPicker() {
+        spPickerView?.let { v -> try { windowManager.removeView(v) } catch (_: Throwable) {} }
+        (spCrosshairView?.parent as? View)?.let { c -> try { windowManager.removeView(c) } catch (_: Throwable) {} }
+        spPickerView = null
+        spCrosshairView = null
+        spSeekBarX = null
+        spSeekBarY = null
+        spTextX = null
+        spTextY = null
+    }
+
+    private fun syncSpControls() {
+        spSeekBarX?.progress = ((spTempX - 0.05f) / 0.9f * 90).toInt()
+        spSeekBarY?.progress = ((spTempY - 0.05f) / 0.9f * 90).toInt()
+        spTextX?.text = "${(spTempX * 100).toInt()}%"
+        spTextY?.text = "${(spTempY * 100).toInt()}%"
+        updateCrosshairOffset()
+    }
+
+    private fun updateCrosshairOffset() {
+        val screen = screenSize()
+        spCrosshairView?.translationX = spTempX * screen.first - screen.first / 2f
+        spCrosshairView?.translationY = spTempY * screen.second - screen.second / 2f
     }
 
     private fun overlayParams(

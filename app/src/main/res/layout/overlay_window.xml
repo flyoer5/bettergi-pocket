@@ -298,6 +298,51 @@
                     app:trackTintMode="src_in" />
             </LinearLayout>
             <LinearLayout
+                android:id="@+id/overlay_row_quick_skip_position"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:minHeight="36dp"
+                android:orientation="horizontal"
+                android:paddingStart="26dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="4dp"
+                android:paddingBottom="4dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="点击位置"
+                        android:textColor="@color/overlay_text"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/overlay_quick_skip_position_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:text="默认（屏幕底部中央）"
+                        android:textColor="@color/overlay_text_muted"
+                        android:textSize="10sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/overlay_quick_skip_position_reset"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:padding="6dp"
+                    android:text="↺"
+                    android:textColor="@color/overlay_text_muted"
+                    android:textSize="14sp" />
+            </LinearLayout>
+            <LinearLayout
                 android:id="@+id/overlay_row_smart_option"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -389,7 +434,6 @@
                     app:trackTintMode="src_in" />
             </LinearLayout>
 
-            </LinearLayout>
             <LinearLayout
                 android:id="@+id/overlay_row_tap_indicator"
                 android:layout_width="match_parent"
@@ -480,6 +524,7 @@
                     app:thumbTintMode="src_in"
                     app:trackTint="@color/overlay_switch_track"
                     app:trackTintMode="src_in" />
+            </LinearLayout>
             </LinearLayout>
 
                     </LinearLayout>
