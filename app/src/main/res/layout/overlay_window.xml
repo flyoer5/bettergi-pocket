@@ -355,6 +355,16 @@
                     android:textSize="14sp" />
             </LinearLayout>
 
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/overlay_switch_quick_skip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:showText="false"
+                    app:thumbTint="@color/overlay_switch_thumb"
+                    app:thumbTintMode="src_in"
+                    app:trackTint="@color/overlay_switch_track"
+                    app:trackTintMode="src_in" />
+            </LinearLayout>
             <LinearLayout
                 android:id="@+id/overlay_row_smart_option"
                 android:layout_width="match_parent"
