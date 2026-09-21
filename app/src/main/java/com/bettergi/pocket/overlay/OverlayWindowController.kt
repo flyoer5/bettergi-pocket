@@ -173,7 +173,7 @@ class OverlayWindowController(
             spStatus?.text = if (settings.quickSkipCustomPosition) {
                 "自定义 ${(settings.quickSkipPositionX * 100).toInt()}%,${(settings.quickSkipPositionY * 100).toInt()}%"
             } else {
-                "默认"
+                "默认（屏幕底部中央）"
             }
             switchSmartOption?.isChecked = settings.smartOptionEnabled
             switchBlackScreen?.isChecked = settings.blackScreenClickEnabled
@@ -238,7 +238,6 @@ class OverlayWindowController(
         rowAutoSkip = root.findViewById(R.id.overlay_row_auto_skip)
         rowQuickSkip = root.findViewById(R.id.overlay_row_quick_skip)
         rowQuickSkipPosition = root.findViewById(R.id.overlay_row_quick_skip_position)
-        spChevron = root.findViewById(R.id.overlay_quick_skip_position_chevron)
         spStatus = root.findViewById(R.id.overlay_quick_skip_position_status)
         spReset = root.findViewById(R.id.overlay_quick_skip_position_reset)
         rowQuickSkipPosition?.setOnClickListener { showSkipPositionPicker() }
@@ -1081,7 +1080,6 @@ class OverlayWindowController(
             windowManager.addView(container, chLp)
             windowManager.addView(picker, lp)
             updateCrosshairOffset()
-            spChevron?.animate()?.rotation(90f)?.setDuration(160)?.start()
         } catch (_: Throwable) {
             hideSkipPositionPicker()
         }
@@ -1108,7 +1106,6 @@ class OverlayWindowController(
         spSeekBarY = null
         spTextX = null
         spTextY = null
-        spChevron?.animate()?.rotation(0f)?.setDuration(160)?.start()
     }
 
     private fun syncSpControls() {

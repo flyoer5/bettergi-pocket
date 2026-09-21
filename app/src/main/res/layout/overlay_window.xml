@@ -304,52 +304,49 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
-                android:minHeight="28dp"
+                android:minHeight="36dp"
                 android:orientation="horizontal"
                 android:paddingStart="10dp"
                 android:paddingTop="2dp"
                 android:paddingEnd="4dp"
-                android:paddingBottom="2dp">
+                android:paddingBottom="4dp">
 
                 <View
                     android:layout_width="2dp"
                     android:layout_height="match_parent"
-                    android:layout_marginTop="4dp"
-                    android:layout_marginBottom="4dp"
+                    android:layout_marginTop="6dp"
+                    android:layout_marginBottom="6dp"
                     android:background="@color/overlay_gold" />
 
-                <ImageView
-                    android:id="@+id/overlay_quick_skip_position_chevron"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:layout_marginStart="6dp"
-                    android:importantForAccessibility="no"
-                    android:src="@drawable/ic_overlay_chevron" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:text="点击位置"
-                    android:textColor="@color/overlay_text"
-                    android:textSize="12sp" />
-
-                <TextView
-                    android:id="@+id/overlay_quick_skip_position_status"
+                <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
                     android:layout_weight="1"
-                    android:gravity="end"
-                    android:paddingEnd="6dp"
-                    android:text="默认"
-                    android:textColor="@color/overlay_text_muted"
-                    android:textSize="11sp" />
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="点击位置"
+                        android:textColor="@color/overlay_text"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/overlay_quick_skip_position_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:text="默认（屏幕底部中央）"
+                        android:textColor="@color/overlay_text_muted"
+                        android:textSize="10sp" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/overlay_quick_skip_position_reset"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:padding="4dp"
+                    android:padding="6dp"
                     android:text="↺"
                     android:textColor="@color/overlay_text_muted"
                     android:textSize="14sp" />
