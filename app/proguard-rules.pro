@@ -31,3 +31,6 @@
 # ===== 保留异常栈行号，便于日志定位 =====
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# ===== app 自身类保留类名：R8 混淆后异常栈可读 =====
+-keep class com.bettergi.pocket.** { *; }

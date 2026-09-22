@@ -33,6 +33,9 @@ object RecognitionObjectJsonLoader {
             throw IllegalArgumentException("type 不能为空")
         }
         val recognitionType = parseEnum<RecognitionTypes>(typeName, "type")
+        if (recognitionType !in IMPLEMENTED_TYPES) {
+            throw IllegalArgumentException("识别类型 $typeName 尚未实现（支持：TemplateMatch/OcrMatch/Ocr/ColorRangeAndOcr）")
+        }
         val templateName = if (recognitionType == RecognitionTypes.TemplateMatch) {
             resolveAlias(config.optString("template"), templates, "模板")
                 ?: throw IllegalArgumentException("对象 $objectName 缺少 template 配置")
@@ -205,6 +208,13 @@ object RecognitionObjectJsonLoader {
         return enumValues<T>().firstOrNull { it.name == value }
             ?: throw IllegalArgumentException("$fieldName 的值 $value 不是有效的 ${T::class.java.simpleName}")
     }
+
+    private val IMPLEMENTED_TYPES = setOf(
+        RecognitionTypes.TemplateMatch,
+        RecognitionTypes.OcrMatch,
+        RecognitionTypes.Ocr,
+        RecognitionTypes.ColorRangeAndOcr,
+    )
 
     private val RECT_REGEX = Regex(
         """^rect\s*\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)$""",
