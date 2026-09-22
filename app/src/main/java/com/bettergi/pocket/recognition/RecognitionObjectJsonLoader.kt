@@ -1,11 +1,10 @@
 package com.bettergi.pocket.recognition
 
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.round
 
 class RecognitionObjectJsonLoadContext(
-    val captureWidth: Int,
-    val captureHeight: Int,
     val templateLoader: (fileName: String, applyLegacyAssetScale: Boolean) -> org.opencv.core.Mat,
 )
 
@@ -71,6 +70,33 @@ object RecognitionObjectJsonLoader {
         }
         if (config.has("binaryThreshold")) {
             ro.binaryThreshold = config.getInt("binaryThreshold")
+        }
+
+        // ---- OCR 相关字段（Ocr / OcrMatch / ColorRangeAndOcr）----
+        config.optJSONArray("allContainMatchText")?.let { arr ->
+            ro.allContainMatchText = jsonStringList(arr)
+        }
+        config.optJSONArray("oneContainMatchText")?.let { arr ->
+            ro.oneContainMatchText = jsonStringList(arr)
+        }
+        config.optJSONArray("regexMatchText")?.let { arr ->
+            ro.regexMatchText = jsonStringList(arr)
+        }
+        config.optJSONObject("replaceDictionary")?.let { obj ->
+            ro.replaceDictionary = buildReplaceDictionary(obj)
+        }
+        config.optString("colorConversion").takeIf { it.isNotBlank() }?.let {
+            ro.colorConversion = parseEnum(it, "colorConversion")
+        }
+        config.optJSONArray("lowerColor")?.let { arr ->
+            if (arr.length() >= 3) {
+                ro.lowerColor = ColorBgr(arr.getDouble(0), arr.getDouble(1), arr.getDouble(2))
+            }
+        }
+        config.optJSONArray("upperColor")?.let { arr ->
+            if (arr.length() >= 3) {
+                ro.upperColor = ColorBgr(arr.getDouble(0), arr.getDouble(1), arr.getDouble(2))
+            }
         }
 
         val reference = config.optJSONObject("reference")
@@ -144,6 +170,24 @@ object RecognitionObjectJsonLoader {
             current = table[alias] ?: throw NoSuchElementException("未找到${kind}别名 $alias")
         }
         return current
+    }
+
+    private fun jsonStringList(arr: JSONArray): List<String> {
+        return List(arr.length()) { arr.optString(it).trim() }.filter { it.isNotEmpty() }
+    }
+
+    /** replaceDictionary: { "正确词": ["错1", "错2"] } */
+    private fun buildReplaceDictionary(obj: JSONObject): Map<String, List<String>> {
+        val result = LinkedHashMap<String, List<String>>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val list = obj.optJSONArray(key)
+            if (list != null) {
+                result[key] = jsonStringList(list)
+            }
+        }
+        return result
     }
 
     private fun jsonStringMap(obj: JSONObject?): Map<String, String> {

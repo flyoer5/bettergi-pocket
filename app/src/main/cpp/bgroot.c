@@ -521,6 +521,10 @@ int main(int argc, char **argv) {
     }
 
     if (has_flag(argc, argv, "--tap")) {
+        if (argc < 4) {
+            fprintf(stderr, "usage: bgroot --tap X Y [--dur ms]\n");
+            return 1;
+        }
         int x = atoi(argv[2]);
         int y = atoi(argv[3]);
         int dur = arg_value(argc, argv, "--dur", 50);
@@ -533,6 +537,10 @@ int main(int argc, char **argv) {
     }
 
     if (has_flag(argc, argv, "--swipe")) {
+        if (argc < 6) {
+            fprintf(stderr, "usage: bgroot --swipe X1 Y1 X2 Y2 [--dur ms]\n");
+            return 1;
+        }
         int x1 = atoi(argv[2]), y1 = atoi(argv[3]);
         int x2 = atoi(argv[4]), y2 = atoi(argv[5]);
         int dur = arg_value(argc, argv, "--dur", 300);

@@ -43,8 +43,6 @@ object RootBridge {
 
     private var appContext: Context? = null
     @Volatile
-    private var keepAliveApplied = false
-    @Volatile
     private var suPath: String? = null
 
     @Volatile
@@ -229,17 +227,6 @@ object RootBridge {
         return null
     }
 
-    fun screenSize(): Pair<Int, Int>? {
-        val resp = request("PROBE", 2000L) ?: return null
-        if (resp.startsWith("OK ")) {
-            val parts = resp.removePrefix("OK ").split(" ")
-            val w = parts.getOrNull(0)?.toIntOrNull() ?: return null
-            val h = parts.getOrNull(1)?.toIntOrNull() ?: return null
-            return w to h
-        }
-        return null
-    }
-
     /** input 命令模式点击（屏幕坐标，经 su 执行系统命令注入，全 root 方案兼容）。 */
     fun inputTap(x: Int, y: Int): Boolean {
         val ctx = appContext ?: return false
@@ -262,12 +249,10 @@ object RootBridge {
         return true
     }
 
-    /** 加入电池白名单 + 提升为 active 待机桶；每进程只应用一次 */
+    /** 加入电池白名单 + 提升为 active 待机桶；每次握手成功都续期（命令幂等，防 OEM 重置） */
     private fun applyKeepAlive() {
-        if (keepAliveApplied) return
         val pkg = appContext?.packageName ?: return
         if (request("KEEPALIVE $pkg", 3000L)?.startsWith("OK") == true) {
-            keepAliveApplied = true
             AppLog.i(TAG, "已申请保活: $pkg")
         }
     }

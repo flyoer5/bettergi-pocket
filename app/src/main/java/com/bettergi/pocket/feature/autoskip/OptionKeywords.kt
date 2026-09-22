@@ -14,6 +14,8 @@ class OptionKeywords(
     val defaultPause: List<String> = emptyList(),
 ) {
     companion object {
+        private const val TAG = "BetterGI.Options"
+
         fun load(assets: AssetManager): OptionKeywords {
             return OptionKeywords(
                 select = loadList(assets, "recognition/AutoSkip/select_options.json"),
@@ -37,6 +39,7 @@ class OptionKeywords(
                 val arr = JSONArray(cleaned)
                 List(arr.length()) { arr.optString(it).trim() }.filter { it.isNotEmpty() }
             } catch (e: Exception) {
+                com.bettergi.pocket.log.AppLog.w(TAG, "加载词表失败: $path -> ${e.message}")
                 emptyList()
             }
         }

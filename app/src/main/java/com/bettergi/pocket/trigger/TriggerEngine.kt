@@ -121,8 +121,8 @@ class TriggerEngine(
 
     private companion object {
         const val TAG = "BetterGI.Engine"
-        const val FAST_TICK_MS = 100L
-        const val SLOW_TICK_MS = 500L
+        const val FAST_TICK_MS = 200L
+        const val SLOW_TICK_MS = 600L
         const val ACTIVE_WINDOW_MS = 1500L
         const val WAIT_CAPTURE_MS = 300L
     }

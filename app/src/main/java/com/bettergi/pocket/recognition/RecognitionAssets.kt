@@ -31,8 +31,6 @@ class RecognitionAssets(
             json,
             key.objectName,
             RecognitionObjectJsonLoadContext(
-                captureWidth = key.captureWidth,
-                captureHeight = key.captureHeight,
                 templateLoader = { fileName, applyLegacyAssetScale ->
                     templateLoader.load(
                         taskName = key.taskName,

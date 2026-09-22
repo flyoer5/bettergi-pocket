@@ -45,8 +45,8 @@ import com.bettergi.pocket.log.AppLog
 import com.bettergi.pocket.root.RootBridge
 import com.bettergi.pocket.settings.TriggerSettings
 import com.bettergi.pocket.settings.TriggerSettingsRepository
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class OverlayWindowController(
@@ -159,7 +159,7 @@ class OverlayWindowController(
     }
     private var logWindowVisible = false
     private var talkingUntilMs: Long = 0L
-    private val logTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.CHINA)
+    private val logTimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.CHINA)
     private val clearTalkingRunnable = Runnable { refreshStatus() }
 
     private val idleFadeRunnable = Runnable { fadeBubble(IDLE_ALPHA) }
@@ -655,7 +655,7 @@ class OverlayWindowController(
 
 
     private fun appendLog(message: String) {
-        appendLogLine("${logTimeFormat.format(Date())} $message")
+        appendLogLine("${logTimeFormat.format(LocalTime.now())} $message")
     }
 
     /** 追加一行已格式化的日志（供 AppLog sink 使用，不再补时间戳） */

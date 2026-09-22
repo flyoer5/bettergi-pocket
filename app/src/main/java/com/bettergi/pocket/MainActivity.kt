@@ -15,6 +15,7 @@ import com.bettergi.pocket.service.TriggerForegroundService
 
 class MainActivity : AppCompatActivity() {
     private var permissionUiShown = false
+    private var launching = false
 
     private val requestPostNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -58,7 +59,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchOverlayAndExit() {
-        if (isFinishing) return
+        if (launching || isFinishing) return
+        launching = true
         val intent = Intent(this, TriggerForegroundService::class.java).apply {
             action = TriggerForegroundService.ACTION_START
         }

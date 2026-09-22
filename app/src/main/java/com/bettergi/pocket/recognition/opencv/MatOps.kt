@@ -145,14 +145,18 @@ object MatOps {
         return bitmap
     }
 
+    private val pixelBuffer = ThreadLocal.withInitial { ByteArray(1) }
+
     fun u8(mat: Mat, y: Int, x: Int): Int {
-        val buf = ByteArray(1)
+        val buf = pixelBuffer.get()
         mat.get(y, x, buf)
         return buf[0].toInt() and 0xFF
     }
 
     fun setU8(mat: Mat, y: Int, x: Int, value: Int) {
-        mat.put(y, x, byteArrayOf(value.toByte()))
+        val buf = pixelBuffer.get()
+        buf[0] = value.toByte()
+        mat.put(y, x, buf)
     }
 }
 
