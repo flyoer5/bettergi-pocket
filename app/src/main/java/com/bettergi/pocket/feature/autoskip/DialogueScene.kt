@@ -8,16 +8,16 @@ import com.bettergi.pocket.recognition.area.Region
 val TALK_HISTORY_LABEL_KEYWORDS = listOf("自动", "播放中")
 
 /**
- * OCR 文本是否命中状态文字：按空白/标点拆词后，每个词都必须精确等于
- * 「自动」或「播放中」。出现任何其他词（如"自动点击"）都不算对话，
- * 避免包含式匹配误判。
+ * OCR 文本是否命中状态文字：按空白/标点拆词后，**必须恰好只有一个词**，
+ * 且该词精确等于「自动」或「播放中」。
+ * 组合（"自动 播放中"）或含其他词（"自动点击"）都不算对话，避免误判。
  */
 fun isTalkHistoryLabelText(text: String): Boolean {
     val tokens = text
-        .split(Regex("[\\s，。、：；！？,.:;!?"'（）()]+"))
+        .split(Regex("[\\s，。、：；！？,.:;!?（）()]+"))
         .map { it.trim() }
         .filter { it.isNotEmpty() }
-    return tokens.isNotEmpty() && tokens.all { it in TALK_HISTORY_LABEL_KEYWORDS }
+    return tokens.size == 1 && tokens[0] in TALK_HISTORY_LABEL_KEYWORDS
 }
 
 /** 仅模板匹配对话图标，不跑 OCR。 */
