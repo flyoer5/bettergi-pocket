@@ -54,6 +54,12 @@ class AutoSkipFeature(
     @Volatile
     private var lastSkipLogMs: Long = 0L
 
+    @Volatile
+    private var lastLabelOcrAtMs: Long = 0L
+
+    @Volatile
+    private var lastLabelOcrHit: Boolean = false
+
     override fun isEnabled(settings: TriggerSettings): Boolean =
         settings.screenShareEnabled && settings.autoSkipEnabled
 
@@ -197,7 +203,18 @@ class AutoSkipFeature(
     }
 
     /** 对话判定沿用原版：仅以对话历史图标（TalkHistory 模板）命中为准。 */
-    private fun inDialogue(content: CaptureContent): Boolean = isDialogueScene(content, assets)
+    private fun inDialogue(content: CaptureContent): Boolean {
+        if (isTalkHistoryIcon(content, assets)) return true
+
+        // 兜底：图标淡化时 OCR 左侧状态文字，1 秒节流；节流窗口内返回上次结果防状态机抖动
+        val now = System.currentTimeMillis()
+        if (now - lastLabelOcrAtMs < TALK_HISTORY_LABEL_OCR_INTERVAL_MS) return lastLabelOcrHit
+        lastLabelOcrAtMs = now
+        val hit = findTalkHistoryLabel(content, assets)
+        lastLabelOcrHit = hit != null
+        if (hit != null) events?.onAutoSkipLog("对话图标未命中，左侧文字命中：${hit.text}")
+        return lastLabelOcrHit
+    }
 
     /**
      * 关键词决策（对齐 PC 版 ChatOptionChoose）：
@@ -276,6 +293,7 @@ class AutoSkipFeature(
         private const val CONFIRM_WINDOW_MS = 600L
         private const val CONFIRM_TIMEOUT_MS = 1200L
         private const val OPTION_DECISION_INTERVAL_MS = 1000L
+        private const val TALK_HISTORY_LABEL_OCR_INTERVAL_MS = 1000L
 
         /** 相邻选项行 Y 间距上限（1080p 基准，对齐 PC 的 150）。 */
         private const val OPTION_MAX_Y_GAP = 150
