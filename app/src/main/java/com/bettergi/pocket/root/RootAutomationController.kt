@@ -28,7 +28,11 @@ class RootAutomationController(
         // 自动点击与用户手动操作完全并行，无需任何让路/避让/兜底。
         when (action) {
             is ClickAction -> {
-                if (bridge.inputTap(action.x, action.y)) {
+                // 点击位置命中悬浮窗/日志窗时临时穿透，避免注入打在悬浮窗上导致游戏无响应
+                val passthrough = overlay.prepareClickPassthrough(action.x, action.y)
+                val ok = bridge.inputTap(action.x, action.y)
+                if (passthrough) overlay.restoreClickPassthrough()
+                if (ok) {
                     overlay.flashTap(action.x, action.y)
                 } else {
                     AppLog.w(TAG, "input tap failed at ${action.x},${action.y}")

@@ -55,7 +55,7 @@ object OcrFactory {
 }
 
 class MlKitOcrService(
-    private val timeoutSeconds: Long = 3,
+    private val timeoutMillis: Long = 1500,
 ) : IOcrService {
     private val recognizer: TextRecognizer =
         TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -65,7 +65,7 @@ class MlKitOcrService(
         val bitmap = MatOps.matToBitmap(mat)
         return try {
             val image = InputImage.fromBitmap(bitmap, 0)
-            val visionText = Tasks.await(recognizer.process(image), timeoutSeconds, TimeUnit.SECONDS)
+            val visionText = Tasks.await(recognizer.process(image), timeoutMillis, TimeUnit.MILLISECONDS)
             toOcrResult(visionText)
         } catch (e: Exception) {
             Log.e(TAG, "ML Kit OCR failed", e)

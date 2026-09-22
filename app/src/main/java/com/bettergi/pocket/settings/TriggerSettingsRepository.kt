@@ -14,15 +14,25 @@ class TriggerSettingsRepository(context: Context) {
     @Volatile
     private var current: TriggerSettings = readFromPrefs()
 
+    /** 监听代次：removeListener 时递增，已排队的旧回调据此跳过，避免过期回调 */
+    @Volatile
+    private var generation = 0L
+
     fun get(): TriggerSettings = current
 
     fun addListener(listener: (TriggerSettings) -> Unit) {
         listeners.add(listener)
-        mainHandler.post { listener(current) }
+        val gen = generation
+        mainHandler.post {
+            if (gen == generation && listeners.contains(listener)) {
+                listener(current)
+            }
+        }
     }
 
     fun removeListener(listener: (TriggerSettings) -> Unit) {
         listeners.remove(listener)
+        generation++
     }
 
     fun setScreenShareEnabled(enabled: Boolean) {
@@ -100,8 +110,13 @@ class TriggerSettingsRepository(context: Context) {
                 .putFloat(KEY_QUICK_SKIP_Y, updated.quickSkipPositionY)
                 .apply()
         }
+        val gen = generation
         listeners.forEach { listener ->
-            mainHandler.post { listener(newValue) }
+            mainHandler.post {
+                if (gen == generation && listeners.contains(listener)) {
+                    listener(newValue)
+                }
+            }
         }
     }
 

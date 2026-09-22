@@ -2,20 +2,23 @@ package com.bettergi.pocket.log
 
 import android.content.Context
 import android.util.Log
+import java.io.BufferedWriter
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.io.FileWriter
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /**
  * 统一日志门面：logcat + 文件（按天切分，保留最近 [KEEP_DAYS] 天）+ 悬浮球面板。
  *
- * 设计：
- * - 调用线程只做格式化与入队，文件写入在单线程 executor 上，不阻塞主线程/注入线程
- * - 面板 sink 由悬浮球注册，未打开面板时其回调自然丢弃
- * - 文件位置：<外部私有目录>/files/logs/bettergi-YYYY-MM-DD.log，root 用户可直接取出
+ * 线程安全设计：
+ * - DateTimeFormatter 线程安全（替代原 SimpleDateFormat 跨线程误用）
+ * - 文件写入在单线程 drain 循环；队列有界（满则丢弃新日志），避免日志洪水 OOM
+ * - 调用线程只做格式化与入队，不阻塞主线程/注入线程
  */
 object AppLog {
 
@@ -24,12 +27,16 @@ object AppLog {
     }
 
     private const val KEEP_DAYS = 3
+    private const val QUEUE_CAPACITY = 4096
     private val sinks = CopyOnWriteArrayList<Sink>()
-    private val writer = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "bg-log-writer").apply { isDaemon = true }
+    private val queue = LinkedBlockingQueue<String>(QUEUE_CAPACITY)
+    private val timeFormat = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss.SSS", Locale.CHINA)
+    private val dayFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+    private val writerThread = Thread(::drainLoop, "bg-log-writer").apply {
+        isDaemon = true
+        start()
     }
-    private val timeFormat = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.CHINA)
-    private val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
 
     @Volatile
     private var logDir: File? = null
@@ -38,7 +45,10 @@ object AppLog {
         val dir = File(context.getExternalFilesDir(null), "logs")
         if (!dir.exists() && !dir.mkdirs()) return
         logDir = dir
-        writer.execute { cleanupOldLogs(dir) }
+        try {
+            cleanupOldLogs(dir)
+        } catch (_: Throwable) {
+        }
     }
 
     fun addSink(sink: Sink) {
@@ -62,7 +72,7 @@ object AppLog {
 
     private fun write(priority: Int, tag: String, message: String) {
         Log.println(priority, tag, message)
-        val line = "${timeFormat.format(Date())} ${levelTag(priority)} [$tag] $message"
+        val line = "${timeFormat.format(LocalDateTime.now())} ${levelTag(priority)} [$tag] $message"
         if (priority != Log.DEBUG) {
             for (sink in sinks) {
                 try {
@@ -71,12 +81,33 @@ object AppLog {
                 }
             }
         }
-        val dir = logDir ?: return
-        writer.execute {
-            try {
-                File(dir, "bettergi-${dayFormat.format(Date())}.log").appendText(line + "\n")
-            } catch (_: Throwable) {
+        if (logDir == null) return
+        queue.offer(line) // 队列满则丢弃，防止内存无界增长
+    }
+
+    private fun drainLoop() {
+        var day = ""
+        var writer: BufferedWriter? = null
+        try {
+            while (true) {
+                val line = queue.poll(2, TimeUnit.SECONDS) ?: continue
+                val dir = logDir ?: continue
+                val today = dayFormat.format(LocalDateTime.now())
+                if (today != day) {
+                    runCatching { writer?.close() }
+                    writer = null
+                    writer = BufferedWriter(FileWriter(File(dir, "bettergi-$today.log"), true))
+                    day = today
+                }
+                val bw = writer ?: continue
+                try {
+                    bw.write(line)
+                    bw.write("\n")
+                    bw.flush()
+                } catch (_: Throwable) {
+                }
             }
+        } catch (_: Throwable) {
         }
     }
 

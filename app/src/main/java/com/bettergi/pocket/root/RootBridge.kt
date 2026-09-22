@@ -8,6 +8,8 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.net.SocketTimeoutException
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -17,6 +19,7 @@ import java.util.concurrent.TimeUnit
  * - 不绑定任何 root 方案（Magisk / KernelSU / APatch / 原生 su 均走通用 su 探测）
  * - 不做授权引导，失败由上层如实报告状态
  * - helper 与 app 同生命周期：stop() 时发 QUIT 并销毁进程
+ * - 连接可靠性：单次请求超时不误判断线；意外断开自动重连（有限次数）
  */
 object RootBridge {
 
@@ -24,6 +27,8 @@ object RootBridge {
     private const val HELPER_ASSET = "root/arm64-v8a/bgroot"
     private const val CONNECT_TIMEOUT_MS = 4000L
     private const val PING_TIMEOUT_MS = 3000L
+    private const val RECONNECT_DELAY_MS = 2000L
+    private const val MAX_RECONNECT_ATTEMPTS = 5
 
     @Volatile
     private var running = false
@@ -41,17 +46,28 @@ object RootBridge {
     private var keepAliveApplied = false
     @Volatile
     private var suPath: String? = null
+
+    @Volatile
+    private var userStopped = false
+    @Volatile
+    private var reconnectPending = false
+    @Volatile
+    private var consecutiveFailures = 0
+    private val reconnectExecutor = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "bg-root-reconnect").apply { isDaemon = true }
+    }
+
     fun attach(context: Context) {
         appContext = context.applicationContext
     }
 
     fun isRunning(): Boolean = running
 
-    /** 启动 helper 并完成握手；成功返回 true */
+    /** 启动 helper 并完成握手；成功返回 true。失败路径统一清理资源（不残留 helper）。 */
     @Synchronized
     fun start(): Boolean {
         val ctx = appContext ?: return false
-        stop()
+        cleanupResources()
 
         val dir = File(ctx.filesDir, "root")
         dir.mkdirs()
@@ -63,7 +79,7 @@ object RootBridge {
         File(sockPath).delete()
 
         val su = resolveSu()
-        // 清理可能残留的旧 helper：避免文件被占用（ETXTBSY）与多实例争用 socket/uinput
+        // 清理可能残留的旧 helper：避免文件被占用（ETXTBSY）与多实例争用 socket。
         // 注意不能用 pkill -f bgroot：执行它的 shell 命令行本身含 "bgroot" 会被自杀误杀，导致清理从未真正生效。
         // 改为按 /proc/*/comm 精确匹配进程名 bgroot 逐个 kill。
         runCommand(
@@ -88,6 +104,7 @@ object RootBridge {
             Thread.sleep(60)
             if (!process.isAlive) {
                 AppLog.e(TAG, "helper 提前退出，code=${process.exitValue()}")
+                cleanupResources()
                 return false
             }
             val s = tryConnect(sockPath, logFailure = firstFail).also { if (it == null) firstFail = false } ?: continue
@@ -97,18 +114,18 @@ object RootBridge {
             val pong = request("PING", PING_TIMEOUT_MS)?.trim()
             if (pong == "OK pong" || pong == "pong") {
                 running = true
+                userStopped = false
+                consecutiveFailures = 0
                 AppLog.i(TAG, "root 已连接")
                 applyKeepAlive()
                 return true
             }
             AppLog.w(TAG, "PING 握手失败: $pong")
-            try {
-                s.close()
-            } catch (_: Exception) {
-            }
+            cleanupResources()
             return false
         }
         AppLog.e(TAG, "连接 helper 超时")
+        cleanupResources()
         return false
     }
 
@@ -133,7 +150,6 @@ object RootBridge {
         return if (!found.isNullOrEmpty()) found else "su"
     }
 
-    /** 每次启动都从 assets 覆盖释放，保证与当前安装包一致 */
     /** 释放 helper：先写临时文件再 rename 替换（旧进程持有的 inode 换新，避免 ETXTBSY） */
     private fun releaseHelper(dest: File): Boolean {
         val ctx = appContext ?: return false
@@ -162,17 +178,24 @@ object RootBridge {
     }
 
     private fun tryConnect(path: String, logFailure: Boolean = false): LocalSocket? {
+        var s: LocalSocket? = null
         return try {
-            val s = LocalSocket()
+            s = LocalSocket()
             s.connect(LocalSocketAddress(path, LocalSocketAddress.Namespace.FILESYSTEM))
             s
         } catch (e: Exception) {
+            // 连接失败必须 close，避免 LocalSocket fd 泄漏
+            runCatching { s?.close() }
             if (logFailure) AppLog.w(TAG, "连接 $path 失败: ${e.message}")
             null
         }
     }
 
-    /** 发送一行指令并读取一行回复；失败返回 null 并标记断线 */
+    /**
+     * 发送一行指令并读取一行回复。
+     * - 请求超时（SocketTimeoutException）：单次请求失败，不影响连接状态，返回 null
+     * - 对端关闭/IO 异常：连接级失败，标记断开并触发自动重连，返回 null
+     */
     @Synchronized
     fun request(cmd: String, timeoutMs: Long = 5000L): String? {
         val sock = socket ?: return null
@@ -183,13 +206,16 @@ object RootBridge {
             out.write((cmd + "\n").toByteArray(Charsets.UTF_8))
             out.flush()
             val line = rd.readLine() ?: run {
-                running = false
+                markDisconnected("对端关闭")
                 null
             }
             line
+        } catch (e: SocketTimeoutException) {
+            AppLog.w(TAG, "request 超时: $cmd")
+            null
         } catch (e: Exception) {
             AppLog.w(TAG, "request failed: $cmd -> ${e.message}")
-            running = false
+            markDisconnected("request 异常: ${e.message}")
             null
         }
     }
@@ -246,9 +272,16 @@ object RootBridge {
         }
     }
 
+    /** 主动停止：不触发自动重连。 */
     @Synchronized
     fun stop() {
         if (running) AppLog.i(TAG, "root 后端停止")
+        userStopped = true
+        cleanupResources()
+    }
+
+    /** 清理连接与 helper 进程（幂等）。不改变 userStopped。 */
+    private fun cleanupResources() {
         running = false
         try {
             output?.write("QUIT\n".toByteArray(Charsets.UTF_8))
@@ -278,6 +311,34 @@ object RootBridge {
         output = null
         reader = null
         helperProcess = null
+    }
+
+    /** 连接意外断开：标记并调度自动重连（有限次数，主动 stop 不重连）。 */
+    private fun markDisconnected(reason: String) {
+        if (!running) return
+        running = false
+        AppLog.w(TAG, "root 连接断开: $reason")
+        scheduleReconnect()
+    }
+
+    private fun scheduleReconnect() {
+        if (reconnectPending) return
+        reconnectPending = true
+        reconnectExecutor.schedule({
+            reconnectPending = false
+            if (userStopped || appContext == null) return@schedule
+            AppLog.i(TAG, "root 自动重连（第 ${consecutiveFailures + 1} 次）")
+            if (start()) {
+                consecutiveFailures = 0
+            } else {
+                consecutiveFailures++
+                if (consecutiveFailures < MAX_RECONNECT_ATTEMPTS) {
+                    scheduleReconnect()
+                } else {
+                    AppLog.e(TAG, "root 自动重连失败 $consecutiveFailures 次，停止自动重试（可点击状态栏手动重连）")
+                }
+            }
+        }, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS)
     }
 
     /** 逐行消费 helper 的 stdout/stderr：写满管道会阻塞 helper 主循环，必须读 */
