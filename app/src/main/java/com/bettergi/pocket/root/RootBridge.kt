@@ -266,9 +266,10 @@ object RootBridge {
         // 兜底：QUIT 未送达（socket 已断）时强杀残留 helper，保证退出后系统干净、覆盖安装不被拖慢。
         // 进程名 bgroot 仅本 app 使用，按 /proc/*/comm 精确匹配安全。
         val su = suPath
-        if (su != null) {
+        val ctx = appContext
+        if (su != null && ctx != null) {
             runCommand(
-                appContext,
+                ctx,
                 "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done'",
                 2000L,
             )
