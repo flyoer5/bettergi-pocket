@@ -175,6 +175,7 @@ class AutoSkipFeature(
                     events?.onAutoSkipLog("选项未变化，超时重试")
                     state = State.IN_DIALOG
                     clickedAtMs = 0L
+                    clickedOptionY = -1
                 }
             }
 

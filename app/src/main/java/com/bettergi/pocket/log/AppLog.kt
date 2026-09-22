@@ -88,15 +88,18 @@ object AppLog {
     private fun drainLoop() {
         var day = ""
         var writer: BufferedWriter? = null
-        try {
-            while (true) {
+        while (true) {
+            try {
                 val line = queue.poll(2, TimeUnit.SECONDS) ?: continue
                 val dir = logDir ?: continue
                 val today = dayFormat.format(LocalDateTime.now())
                 if (today != day) {
                     runCatching { writer?.close() }
                     writer = null
-                    writer = BufferedWriter(FileWriter(File(dir, "bettergi-$today.log"), true))
+                    // 构造失败（磁盘异常等）不杀写线程：丢弃该行，下轮重试
+                    val newWriter = runCatching { BufferedWriter(FileWriter(File(dir, "bettergi-$today.log"), true)) }.getOrNull()
+                    if (newWriter == null) continue
+                    writer = newWriter
                     day = today
                 }
                 val bw = writer ?: continue
@@ -106,8 +109,13 @@ object AppLog {
                     bw.flush()
                 } catch (_: Throwable) {
                 }
+            } catch (_: Throwable) {
+                // 循环体意外异常：短暂让出后继续，保证写线程永不退出
+                try {
+                    Thread.sleep(200)
+                } catch (_: InterruptedException) {
+                }
             }
-        } catch (_: Throwable) {
         }
     }
 

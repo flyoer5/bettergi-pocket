@@ -160,6 +160,7 @@ class OverlayWindowController(
     }
     private var logWindowVisible = false
     private var talkingUntilMs: Long = 0L
+    private var lastTalkLogMs: Long = 0L
     private val logTimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.CHINA)
     private val clearTalkingRunnable = Runnable { refreshStatus() }
 
@@ -619,7 +620,12 @@ class OverlayWindowController(
 
     override fun onTalkHistoryMatched() {
         mainHandler.post {
-            AppLog.i("BetterGI.AutoSkip", "检测到对话（TalkHistory 命中）")
+            val now = System.currentTimeMillis()
+            // 节流：IN_DIALOG 每 tick 都会命中，日志 2s 一条
+            if (now - lastTalkLogMs >= TALK_LOG_INTERVAL_MS) {
+                lastTalkLogMs = now
+                AppLog.i("BetterGI.AutoSkip", "检测到对话（TalkHistory 命中）")
+            }
             talkingUntilMs = System.currentTimeMillis() + TALKING_HOLD_MS
             mainHandler.removeCallbacks(clearTalkingRunnable)
             mainHandler.postDelayed(clearTalkingRunnable, TALKING_HOLD_MS)
@@ -989,7 +995,7 @@ class OverlayWindowController(
                     syncSpControls()
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
         spCrosshairView = crosshair
@@ -1043,7 +1049,7 @@ class OverlayWindowController(
                     }
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
         picker.findViewById<View>(R.id.sp_picker_close).setOnClickListener { hideSkipPositionPicker() }
@@ -1178,7 +1184,7 @@ class OverlayWindowController(
                     persistLogPosition(lp)
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
     }
@@ -1263,7 +1269,7 @@ class OverlayWindowController(
                     clampLogWindows()
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
     }
@@ -1305,7 +1311,7 @@ class OverlayWindowController(
                     persistPosition(lp)
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
     }
@@ -1368,7 +1374,7 @@ class OverlayWindowController(
                     if (!expanded) scheduleIdleFade()
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
     }
@@ -1544,6 +1550,7 @@ class OverlayWindowController(
         private const val LOG_DEFAULT_HEIGHT_DP = 148
         private const val IDLE_ALPHA = 0.62f
         private const val IDLE_DELAY_MS = 2400L
+        private const val TALK_LOG_INTERVAL_MS = 2000L
         private const val TALKING_HOLD_MS = 2000L
         private const val MAX_LOG_LINES = 400
         private const val TAP_INDICATOR_SIZE_DP = 28
