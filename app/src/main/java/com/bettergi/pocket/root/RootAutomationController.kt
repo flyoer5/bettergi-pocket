@@ -29,46 +29,27 @@ class RootAutomationController(
     @Volatile
     private var naturalSize: Pair<Int, Int>? = null
 
-    @Volatile
-    private var lastYieldLogMs: Long = 0L
-
     override fun execute(action: AutomationAction) {
-        // 用户正在操作时自动注入统一让路，实现互不影响；松手后自动恢复
-        if (UserTouchMonitor.isUserActive()) {
-            val now = System.currentTimeMillis()
-            if (now - lastYieldLogMs >= YIELD_LOG_INTERVAL_MS) {
-                lastYieldLogMs = now
-                AppLog.i(TAG, "用户正在操作，自动点击让路: $action")
-            }
-            return
-        }
+        // 系统 input 命令注入（InputManager 正规管线，等同真实手指）优先：
+        // 不产生虚拟触摸屏设备，不会触发系统对用户手势的 ACTION_CANCEL（断触），
+        // 因此自动点击与用户手动操作完全并行，无需任何让路/避让。
         when (action) {
             is ClickAction -> {
-                if (bridge.uinputReady() == false) {
-                    // input 命令模式：直接用屏幕坐标（无需反旋转）
-                    if (bridge.inputTap(action.x, action.y)) {
-                        overlay.flashTap(action.x, action.y)
-                    } else {
-                        AppLog.w(TAG, "input tap failed at ${action.x},${action.y}")
-                    }
+                if (bridge.inputTap(action.x, action.y)) {
+                    overlay.flashTap(action.x, action.y)
                     return
                 }
-                // uinput 模式：先反旋转到设备自然坐标再注入
+                AppLog.w(TAG, "input tap failed at ${action.x},${action.y}, fallback uinput")
+                // fallback：uinput 注入（先反旋转到设备自然坐标）
                 val (dx, dy) = toDeviceCoordinates(action.x, action.y)
                 if (bridge.tap(dx, dy, action.durationMs)) {
                     overlay.flashTap(action.x, action.y)
                 } else {
-                    AppLog.w(TAG, "uinput tap failed at ${action.x},${action.y} -> $dx,$dy, fallback input-cmd")
-                    bridge.downgradeToInputMode()
-                    if (bridge.inputTap(action.x, action.y)) {
-                        overlay.flashTap(action.x, action.y)
-                    }
+                    AppLog.w(TAG, "uinput tap failed at ${action.x},${action.y} -> $dx,$dy")
                 }
             }
             BackAction -> {
-                if (bridge.uinputReady() == false) {
-                    bridge.inputBack()
-                } else {
+                if (!bridge.inputBack() && bridge.uinputReady() != false) {
                     bridge.back()
                 }
             }
@@ -99,7 +80,6 @@ class RootAutomationController(
     }
 
     private companion object {
-        private const val YIELD_LOG_INTERVAL_MS = 2000L
         const val TAG = "BetterGI.Input"
     }
 }

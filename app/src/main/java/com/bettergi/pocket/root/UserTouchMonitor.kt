@@ -6,16 +6,21 @@ import java.io.InputStreamReader
 
 /**
  * 用户手动触摸监测（root 版）：
- * 监听真实触摸屏输入，实现自动点击与手动操作互不影响——用户正在操作时
- * 自动注入统一让路，松手后自动恢复。
+ * 实时监听真实触摸屏的位置与活动，实现自动点击与手动操作互不影响——
+ * 自动注入完全并行进行，仅在落点与用户手指位置重合时避开落点。
  * 只收真实触摸屏事件，排除本 app 的 uinput 虚拟设备（BetterGI Virtual Touch）。
+ * 坐标空间：设备自然方向（与 uinput 注入同一空间，由调用方做显示旋转换算）。
  */
 object UserTouchMonitor {
 
     private const val TAG = "BetterGI.TouchMonitor"
 
     @Volatile
-    private var lastUserTouchAtMs: Long = 0L
+    private var lastTouchX: Int = -1
+    @Volatile
+    private var lastTouchY: Int = -1
+    @Volatile
+    private var lastTouchAtMs: Long = 0L
 
     @Volatile
     private var active = false
@@ -23,11 +28,20 @@ object UserTouchMonitor {
     private val threads = mutableListOf<Thread>()
     private val processes = mutableListOf<Process>()
 
-    /** 用户在最近 windowMs 内是否触摸过屏幕（默认 800ms 窗口，含松手恢复缓冲）。 */
+    /** 最近一段窗口（默认 800ms）内用户是否触摸过屏幕。 */
     fun isUserActive(windowMs: Long = 800L): Boolean {
         if (!active) return false
-        val last = lastUserTouchAtMs
+        val last = lastTouchAtMs
         return last > 0 && System.currentTimeMillis() - last <= windowMs
+    }
+
+    /** 手指当前（窗口内）位置是否在设备坐标 (dx, dy) 的 distPx 内。 */
+    fun isUserNear(dx: Int, dy: Int, distPx: Int): Boolean {
+        if (!active || !isUserActive()) return false
+        if (lastTouchX < 0 || lastTouchY < 0) return false
+        val sx = lastTouchX - dx
+        val sy = lastTouchY - dy
+        return sx * sx + sy * sy <= distPx * distPx
     }
 
     @Synchronized
@@ -35,11 +49,13 @@ object UserTouchMonitor {
         if (active) return
         val devices = detectTouchDevices()
         if (devices.isEmpty()) {
-            AppLog.w(TAG, "未探测到触摸屏设备，手动操作保护不可用")
+            AppLog.w(TAG, "未探测到触摸屏设备，手指避让不可用")
             return
         }
         active = true
-        lastUserTouchAtMs = 0L
+        lastTouchX = -1
+        lastTouchY = -1
+        lastTouchAtMs = 0L
         for (dev in devices) {
             val t = Thread({ listen(dev) }, "TouchMonitor")
             t.isDaemon = true
@@ -57,32 +73,47 @@ object UserTouchMonitor {
         processes.clear()
         threads.forEach { runCatching { it.interrupt() } }
         threads.clear()
-        lastUserTouchAtMs = 0L
+        lastTouchX = -1
+        lastTouchY = -1
+        lastTouchAtMs = 0L
         AppLog.i(TAG, "触摸监测停止")
     }
 
     private fun listen(device: String) {
         try {
             while (active) {
-                // /dev/input/eventX 属 root:input 组，app 无权直读，必须经 su
                 val p = ProcessBuilder(
                     RootBridge.currentSu(),
                     "-c",
                     "export PATH=/system/bin:/system/xbin:\$PATH; getevent $device",
-                )
-                    .redirectErrorStream(true)
-                    .start()
+                ).redirectErrorStream(true).start()
                 synchronized(this) { processes.add(p) }
                 val reader = BufferedReader(InputStreamReader(p.inputStream), 4096)
                 var line: String?
                 while (active && p.isAlive && reader.readLine().also { line = it } != null) {
                     val l = line ?: continue
-                    // toybox getevent 单设备输出: "0003 0039 00000001"；部分实现带 "/dev/input/eventX:" 前缀
+                    // toybox getevent 单设备输出: "0003 0035 0000012c"；部分实现带 "/dev/input/eventX:" 前缀
                     val idx = l.indexOf(':')
                     val body = if (idx >= 0) l.substring(idx + 1) else l
-                    val typeHex = body.trim().take(4)
-                    if (typeHex.length == 4 && typeHex != "0000") {
-                        lastUserTouchAtMs = System.currentTimeMillis()
+                    val parts = body.trim().split(Regex("\\s+"))
+                    if (parts.size < 3) continue
+                    val typeHex = parts[0]
+                    if (typeHex.length != 4 || typeHex == "0000") continue
+                    val now = System.currentTimeMillis()
+                    if (typeHex == "0003") {
+                        val value = parts[2].toLongOrNull(16)
+                        when (parts[1]) {
+                            "0035" -> { lastTouchX = value?.toInt() ?: -1; lastTouchAtMs = now }
+                            "0036" -> { lastTouchY = value?.toInt() ?: -1; lastTouchAtMs = now }
+                            // ABS_MT_TRACKING_ID ffffffff = 手指释放
+                            "0039" -> {
+                                lastTouchAtMs = now
+                                if (value == -1L) { lastTouchX = -1; lastTouchY = -1 }
+                            }
+                            else -> lastTouchAtMs = now
+                        }
+                    } else {
+                        lastTouchAtMs = now
                     }
                 }
                 runCatching { reader.close() }
