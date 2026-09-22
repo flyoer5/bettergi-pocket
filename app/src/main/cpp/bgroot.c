@@ -34,6 +34,7 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 #include <signal.h>
+#include <sys/select.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -384,6 +385,19 @@ static int run_server(const char *sock_path, int allow_uid) {
             fprintf(stderr, "app process gone, helper exit\n");
             break;
         }
+        /* 用 select 1s 超时轮询，避免 accept 阻塞时无法检查 app 存活 */
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(sfd, &rfds);
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        int sr = select(sfd + 1, &rfds, NULL, NULL, &tv);
+        if (sr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (sr == 0) continue; /* 超时：回到循环头检查 app 存活 */
         int cfd = accept(sfd, NULL, NULL);
         if (cfd < 0) {
             if (errno == EINTR) continue;

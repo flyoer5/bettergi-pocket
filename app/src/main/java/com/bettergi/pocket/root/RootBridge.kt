@@ -78,7 +78,13 @@ object RootBridge {
 
         val su = resolveSu()
         // 清理可能残留的旧 helper：避免文件被占用（ETXTBSY）与多实例争用 socket/uinput
-        runCommand(ctx, "$su -c \"pkill -f bgroot 2>/dev/null; sleep 0.2\"", 3000L)
+        // 注意不能用 pkill -f bgroot：执行它的 shell 命令行本身含 "bgroot" 会被自杀误杀，导致清理从未真正生效。
+        // 改为按 /proc/*/comm 精确匹配进程名 bgroot 逐个 kill。
+        runCommand(
+            ctx,
+            "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done; sleep 0.2'",
+            3000L,
+        )
 
         val cmd = "$su -c \"$helper --server --sock $sockPath --uid ${android.os.Process.myUid()} --app-pid ${android.os.Process.myPid()}\""
         val process = try {
@@ -307,6 +313,16 @@ object RootBridge {
         try {
             helperProcess?.destroy()
         } catch (_: Exception) {
+        }
+        // 兜底：QUIT 未送达（socket 已断）时强杀残留 helper，保证退出后系统干净、覆盖安装不被拖慢。
+        // 进程名 bgroot 仅本 app 使用，按 /proc/*/comm 精确匹配安全。
+        val su = suPath
+        if (su != null) {
+            runCommand(
+                appContext,
+                "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done'",
+                2000L,
+            )
         }
         socket = null
         output = null

@@ -55,6 +55,9 @@ class AutoSkipFeature(
     private var lastSkipLogMs: Long = 0L
 
     @Volatile
+    private var lastSkipClickMs: Long = 0L
+
+    @Volatile
     private var lastLabelOcrAtMs: Long = 0L
 
     @Volatile
@@ -96,11 +99,15 @@ class AutoSkipFeature(
                         screenBottomCenter(tick.screenWidth, tick.screenHeight)
                     }
                     val skipNow = System.currentTimeMillis()
-                    if (skipNow - lastSkipLogMs >= SKIP_LOG_INTERVAL_MS) {
-                        lastSkipLogMs = skipNow
-                        events?.onAutoSkipLog("点击跳过 ($skipX, $skipY)")
+                    // 点击节流：避免每帧狂点干扰手动操作（500ms 一次足够逐行跳过对话）
+                    if (skipNow - lastSkipClickMs >= SKIP_CLICK_INTERVAL_MS) {
+                        lastSkipClickMs = skipNow
+                        if (skipNow - lastSkipLogMs >= SKIP_LOG_INTERVAL_MS) {
+                            lastSkipLogMs = skipNow
+                            events?.onAutoSkipLog("点击跳过 ($skipX, $skipY)")
+                        }
+                        actions.emit(ClickAction(skipX, skipY))
                     }
-                    actions.emit(ClickAction(skipX, skipY))
                 }
 
                 val now = System.currentTimeMillis()
@@ -302,6 +309,7 @@ class AutoSkipFeature(
         private const val BLACK_RATE_MAX = 0.98999
         private const val IDLE_LOG_INTERVAL_MS = 5000L
         private const val SKIP_LOG_INTERVAL_MS = 5000L
+        private const val SKIP_CLICK_INTERVAL_MS = 500L
 
         fun selectTopChatIcon(hits: List<Region>): Region? = hits.minByOrNull { it.y }
     }
