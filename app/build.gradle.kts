@@ -92,12 +92,8 @@ dependencies {
     implementation(libs.opencv)
     implementation(libs.mlkit.text.recognition.chinese)
     testImplementation(libs.junit)
-    val desktopOpenCv = file("libs/opencv-4.9.0-0.jar")
-    if (desktopOpenCv.exists()) {
-        testImplementation(files(desktopOpenCv))
-    } else {
-        testImplementation(libs.opencv.desktop)
-    }
+    // 单测用 openpnp 桌面版（OpenCV 4.9，仅 JVM 单测加载；运行时用 org.opencv 4.12 AAR，API 兼容）
+    testImplementation(libs.opencv.desktop)
     testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

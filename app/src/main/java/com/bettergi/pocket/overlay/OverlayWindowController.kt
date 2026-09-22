@@ -64,6 +64,7 @@ class OverlayWindowController(
     private var lastScreenW = 0
     private var lastScreenH = 0
     private var watchingScreen = false
+    private var lastManualReconnectMs = 0L
 
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = Unit
@@ -216,7 +217,10 @@ class OverlayWindowController(
         statusDot = root.findViewById(R.id.overlay_status_dot)
         statusText = root.findViewById<TextView>(R.id.overlay_status_text).also { text ->
             text.setOnClickListener {
-                if (!RootBridge.isRunning()) {
+                val now = System.currentTimeMillis()
+                // 防抖：2 秒内不重复手动重连；已有自动重连兜底
+                if (!RootBridge.isRunning() && now - lastManualReconnectMs > 2000L) {
+                    lastManualReconnectMs = now
                     Thread { RootBridge.start() }.start()
                 }
             }
@@ -720,7 +724,7 @@ class OverlayWindowController(
         if (!settingsRepository.get().showTapIndicator) return
         if (!Settings.canDrawOverlays(context)) return
         mainHandler.post {
-            val size = dp(TAP_INDICATOR_SIZE_DP)
+            val size = tapIndicatorSizePx
             if (tapIndicatorView == null) {
                 val dot = View(themedContext)
                 dot.background = ContextCompat.getDrawable(themedContext, R.drawable.tap_indicator)
@@ -1517,6 +1521,8 @@ class OverlayWindowController(
         }
         return dp(28)
     }
+
+    private val tapIndicatorSizePx: Int by lazy { dp(TAP_INDICATOR_SIZE_DP) }
 
     private fun dp(value: Int): Int {
         return (value * context.resources.displayMetrics.density).toInt()
