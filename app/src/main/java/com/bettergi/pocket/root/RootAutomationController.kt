@@ -29,7 +29,19 @@ class RootAutomationController(
     @Volatile
     private var naturalSize: Pair<Int, Int>? = null
 
+    @Volatile
+    private var lastYieldLogMs: Long = 0L
+
     override fun execute(action: AutomationAction) {
+        // 用户正在操作时自动注入统一让路，实现互不影响；松手后自动恢复
+        if (UserTouchMonitor.isUserActive()) {
+            val now = System.currentTimeMillis()
+            if (now - lastYieldLogMs >= YIELD_LOG_INTERVAL_MS) {
+                lastYieldLogMs = now
+                AppLog.i(TAG, "用户正在操作，自动点击让路: $action")
+            }
+            return
+        }
         when (action) {
             is ClickAction -> {
                 if (bridge.uinputReady() == false) {
@@ -87,6 +99,7 @@ class RootAutomationController(
     }
 
     private companion object {
+        private const val YIELD_LOG_INTERVAL_MS = 2000L
         const val TAG = "BetterGI.Input"
     }
 }

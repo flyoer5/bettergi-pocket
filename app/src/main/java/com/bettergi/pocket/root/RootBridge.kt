@@ -112,6 +112,7 @@ object RootBridge {
             if (pong == "OK pong" || pong == "pong") {
                 running = true
                 AppLog.i(TAG, "root 已连接")
+                UserTouchMonitor.start()
                 detectUinputMode()
                 applyKeepAlive()
                 return true
@@ -126,6 +127,9 @@ object RootBridge {
         AppLog.e(TAG, "连接 helper 超时")
         return false
     }
+
+    /** 供触摸监测等复用：当前已解析的 su 绝对路径 */
+    fun currentSu(): String = suPath ?: resolveSu()
 
     /** 解析可用的 su 绝对路径（多路径探测，不依赖 app 的 PATH） */
     private fun resolveSu(): String {
@@ -301,6 +305,7 @@ object RootBridge {
     fun stop() {
         if (running) AppLog.i(TAG, "root 后端停止")
         running = false
+        UserTouchMonitor.stop()
         try {
             output?.write("QUIT\n".toByteArray(Charsets.UTF_8))
             output?.flush()
