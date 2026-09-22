@@ -932,7 +932,7 @@ class OverlayWindowController(
                 renderLogs()
                 logScroll?.post { logScroll?.smoothScrollTo(0, logScroll?.getChildAt(0)?.height ?: 0) }
                 val settings = settingsRepository.get()
-                appendLog("状态：root=${if (RootBridge.isRunning()) "已连接" else "未连接"} 注入=${if (!RootBridge.isRunning()) "-" else if (RootBridge.uinputReady() == false) "input" else "uinput"} 共享=${if (settings.screenShareEnabled) "开" else "关"} 对话=${if (settings.autoSkipEnabled) "开" else "关"}")
+                appendLog("状态：root=${if (RootBridge.isRunning()) "已连接" else "未连接"} 注入=input 共享=${if (settings.screenShareEnabled) "开" else "关"} 对话=${if (settings.autoSkipEnabled) "开" else "关"}")
             }
         } catch (_: Throwable) {
             hideLogWindow()

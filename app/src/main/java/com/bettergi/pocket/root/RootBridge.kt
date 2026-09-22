@@ -41,25 +41,11 @@ object RootBridge {
     private var keepAliveApplied = false
     @Volatile
     private var suPath: String? = null
-    @Volatile
-    private var uinputAvailable: Boolean? = null
-
     fun attach(context: Context) {
         appContext = context.applicationContext
     }
 
     fun isRunning(): Boolean = running
-
-    /** uinput 注入是否可用；null = 尚未探测到。 */
-    fun uinputReady(): Boolean? = uinputAvailable
-
-    /** uinput 注入中途失效时降级到 input 命令模式（只允许 true -> false）。 */
-    fun downgradeToInputMode() {
-        if (uinputAvailable == true) {
-            uinputAvailable = false
-            AppLog.w(TAG, "uinput 注入失败，已降级到 input 命令模式")
-        }
-    }
 
     /** 启动 helper 并完成握手；成功返回 true */
     @Synchronized
@@ -112,8 +98,6 @@ object RootBridge {
             if (pong == "OK pong" || pong == "pong") {
                 running = true
                 AppLog.i(TAG, "root 已连接")
-                UserTouchMonitor.start()
-                detectUinputMode()
                 applyKeepAlive()
                 return true
             }
@@ -127,9 +111,6 @@ object RootBridge {
         AppLog.e(TAG, "连接 helper 超时")
         return false
     }
-
-    /** 供触摸监测等复用：当前已解析的 su 绝对路径 */
-    fun currentSu(): String = suPath ?: resolveSu()
 
     /** 解析可用的 su 绝对路径（多路径探测，不依赖 app 的 PATH） */
     private fun resolveSu(): String {
@@ -213,24 +194,6 @@ object RootBridge {
         }
     }
 
-    fun tap(x: Int, y: Int, durationMs: Long): Boolean {
-        val resp = request("TAP $x $y $durationMs", 2000L)
-        if (resp == null || !resp.startsWith("OK")) {
-            AppLog.w(TAG, "注入点击失败 ($x,$y) resp=$resp")
-            return false
-        }
-        return true
-    }
-
-    fun back(): Boolean {
-        val resp = request("BACK", 2000L)
-        if (resp == null || !resp.startsWith("OK")) {
-            AppLog.w(TAG, "返回键注入失败 resp=$resp")
-            return false
-        }
-        return true
-    }
-
     fun foreground(): String? {
         val resp = request("FG", 3000L) ?: return null
         if (resp.startsWith("OK ")) {
@@ -249,24 +212,6 @@ object RootBridge {
             return w to h
         }
         return null
-    }
-
-    /** 探测 uinput 可用性并记录注入模式（uinput / input-cmd 兜底）。 */
-    private fun detectUinputMode() {
-        val probe = request("PROBE", 2000L)
-        uinputAvailable = if (probe != null && probe.startsWith("OK ")) {
-            probe.removePrefix("OK ").split(" ").getOrNull(2) == "uinput_ok"
-        } else {
-            null
-        }
-        AppLog.i(
-            TAG,
-            "注入模式: " + when (uinputAvailable) {
-                true -> "uinput 高速注入"
-                false -> "input 命令（uinput 不可用，兼容兜底）"
-                null -> "未知（PROBE 探测失败）"
-            },
-        )
     }
 
     /** input 命令模式点击（屏幕坐标，经 su 执行系统命令注入，全 root 方案兼容）。 */
@@ -305,7 +250,6 @@ object RootBridge {
     fun stop() {
         if (running) AppLog.i(TAG, "root 后端停止")
         running = false
-        UserTouchMonitor.stop()
         try {
             output?.write("QUIT\n".toByteArray(Charsets.UTF_8))
             output?.flush()

@@ -494,14 +494,20 @@ int main(int argc, char **argv) {
         return 3;
     }
 
-    ufd = create_uinput();
-    if (ufd < 0) {
-        fprintf(stderr, "WARN uinput unavailable: %s\n", strerror(errno));
+    if (has_flag(argc, argv, "--server")) {
+        /* root 版统一走系统 input 注入（InputManager 正规管线，等同真实手指）。
+         * 不再创建 uinput 虚拟触摸设备：独立的 DIRECT 触摸设备产生 DOWN 时，
+         * 系统可能对窗口进行中的手势发 ACTION_CANCEL，导致用户拖动断触。 */
+        ufd = -1;
+        fprintf(stderr, "OK server mode (no uinput, input-cmd injection)\n");
         fflush(stderr);
-        if (!has_flag(argc, argv, "--server")) {
+    } else {
+        ufd = create_uinput();
+        if (ufd < 0) {
+            fprintf(stderr, "WARN uinput unavailable: %s\n", strerror(errno));
+            fflush(stderr);
             return 3;
         }
-    } else {
         fprintf(stderr, "OK uinput created BetterGI Virtual Touch (%dx%d)\n", scr_w, scr_h);
         fflush(stderr);
     }
