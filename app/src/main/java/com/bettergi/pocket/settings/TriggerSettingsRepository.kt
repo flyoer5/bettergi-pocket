@@ -19,6 +19,27 @@ class TriggerSettingsRepository(context: Context) {
     @Volatile
     private var generation = 0L
 
+    /**
+     * 跨实例同步：多个模块（App 页 / 前台服务 / 悬浮球）会各自创建仓库实例，
+     * 任何实例写入 prefs 时，其他实例据此刷新内存副本并通知自己的监听器，
+     * 保证改设置后运行中的引擎/UI 立即拿到最新值。
+     */
+    private val prefsChangeListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            val fresh: TriggerSettings
+            synchronized(lock) {
+                fresh = readFromPrefs()
+                if (fresh == current) return@OnSharedPreferenceChangeListener
+                current = fresh
+            }
+            notifyListeners(fresh)
+        }
+
+    init {
+        // 注意：SharedPreferences 对监听器持弱引用，必须由本实例强引用持有
+        prefs.registerOnSharedPreferenceChangeListener(prefsChangeListener)
+    }
+
     fun get(): TriggerSettings = current
 
     fun addListener(listener: (TriggerSettings) -> Unit) {
@@ -124,11 +145,15 @@ class TriggerSettingsRepository(context: Context) {
                 }
             }.apply()
         }
+        notifyListeners(newValue)
+    }
+
+    private fun notifyListeners(value: TriggerSettings) {
         val gen = generation
         listeners.forEach { listener ->
             mainHandler.post {
                 if (gen == generation && listeners.contains(listener)) {
-                    listener(newValue)
+                    listener(value)
                 }
             }
         }
