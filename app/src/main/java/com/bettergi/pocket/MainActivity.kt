@@ -1,6 +1,7 @@
 package com.bettergi.pocket
 
 import android.Manifest
+import android.app.ActivityManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -20,7 +21,7 @@ import com.bettergi.pocket.service.TriggerForegroundService
 import com.bettergi.pocket.settings.TriggerSettingsRepository
 
 /**
- * App 主页：状态总览 + 权限引导 + 启动/停止助手 + 关于。
+ * App 主页：状态总览 + 权限引导 + 启动/停止助手。
  * 悬浮窗（悬浮球面板）不受影响，二者共用同一份设置与前台服务。
  */
 class MainActivity : AppCompatActivity() {
@@ -29,17 +30,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsRepository: TriggerSettingsRepository
 
     private var refreshTask: Runnable? = null
-    private var autoStartRequested = false
 
     private lateinit var versionText: TextView
     private lateinit var statusRoot: TextView
-    private lateinit var statusInject: TextView
+    private lateinit var statusAssistant: TextView
     private lateinit var statusShare: TextView
     private lateinit var statusAutoSkip: TextView
     private lateinit var statusQuickSkip: TextView
     private lateinit var permissionOverlayState: TextView
     private lateinit var permissionNotificationState: TextView
-    private lateinit var aboutText: TextView
 
     private val requestPostNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
@@ -51,13 +50,12 @@ class MainActivity : AppCompatActivity() {
 
         versionText = findViewById(R.id.home_version)
         statusRoot = findViewById(R.id.status_root)
-        statusInject = findViewById(R.id.status_inject)
+        statusAssistant = findViewById(R.id.status_assistant)
         statusShare = findViewById(R.id.status_share)
         statusAutoSkip = findViewById(R.id.status_autoskip)
         statusQuickSkip = findViewById(R.id.status_quickskip)
         permissionOverlayState = findViewById(R.id.permission_overlay_state)
         permissionNotificationState = findViewById(R.id.permission_notification_state)
-        aboutText = findViewById(R.id.about_text)
 
         findViewById<Button>(R.id.btn_overlay_permission).setOnClickListener {
             startActivity(
@@ -70,13 +68,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_notification_permission).setOnClickListener {
             requestNotificationPermission()
         }
-        findViewById<Button>(R.id.btn_start_assistant).setOnClickListener { startAssistant(showToast = true) }
+        findViewById<Button>(R.id.btn_start_assistant).setOnClickListener { startAssistant() }
         findViewById<Button>(R.id.btn_stop_assistant).setOnClickListener { stopAssistant() }
 
         versionText.text = "版本 ${appVersionName()}"
-        aboutText.text = "原神自动化助手 · ROOT 注入版\n" +
-            "自动对话 · 点击位置自定义 · 智能选项\n" +
-            "启动后通过悬浮球操作，无需停留本页"
 
         // 已授权时自动拉起助手（保持「打开即工作」体验）
         if (Settings.canDrawOverlays(this)) {
@@ -117,10 +112,26 @@ class MainActivity : AppCompatActivity() {
         val off = ContextCompat.getColor(this, R.color.overlay_status_off)
         val warn = ContextCompat.getColor(this, R.color.overlay_status_warn)
 
-        val rootOk = RootBridge.isRunning()
-        statusRoot.text = if (rootOk) "已连接" else "未连接"
-        statusRoot.setTextColor(if (rootOk) on else warn)
-        statusInject.text = "input"
+        // ROOT：已连接 / 连接中… / 未连接
+        when {
+            RootBridge.isRunning() -> {
+                statusRoot.text = "已连接"
+                statusRoot.setTextColor(on)
+            }
+            RootBridge.isConnecting() -> {
+                statusRoot.text = "连接中…"
+                statusRoot.setTextColor(warn)
+            }
+            else -> {
+                statusRoot.text = "未连接"
+                statusRoot.setTextColor(warn)
+            }
+        }
+
+        // 助手（前台服务）真实运行状态
+        val assistantRunning = isAssistantRunning()
+        statusAssistant.text = if (assistantRunning) "运行中" else "已停止"
+        statusAssistant.setTextColor(if (assistantRunning) on else off)
 
         val settings = settingsRepository.get()
         statusShare.text = if (settings.screenShareEnabled) "开" else "关"
@@ -139,31 +150,47 @@ class MainActivity : AppCompatActivity() {
         permissionNotificationState.setTextColor(if (notificationOk) on else warn)
     }
 
-    private fun startAssistant(showToast: Boolean) {
+    /** 助手（TriggerForegroundService）是否在运行：查询本应用自己的服务列表。 */
+    private fun isAssistantRunning(): Boolean {
+        val am = getSystemService(ActivityManager::class.java) ?: return false
+        return try {
+            am.getRunningServices(Int.MAX_VALUE).any {
+                it.service.className == TriggerForegroundService::class.java.name
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun startAssistant(showToast: Boolean = true) {
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
+            if (showToast) Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
             return
         }
-        if (autoStartRequested && RootBridge.isRunning()) {
+        if (isAssistantRunning()) {
             if (showToast) Toast.makeText(this, "助手已在运行", Toast.LENGTH_SHORT).show()
             return
         }
-        autoStartRequested = true
         val intent = Intent(this, TriggerForegroundService::class.java).apply {
             action = TriggerForegroundService.ACTION_START
         }
         ContextCompat.startForegroundService(this, intent)
-        if (showToast) Toast.makeText(this, "助手已启动，可通过悬浮球操作", Toast.LENGTH_SHORT).show()
+        if (showToast) Toast.makeText(this, "助手已启动", Toast.LENGTH_SHORT).show()
+        mainHandler.postDelayed({ refreshStatus() }, 300)
     }
 
     private fun stopAssistant() {
-        autoStartRequested = false
+        if (!isAssistantRunning()) {
+            Toast.makeText(this, "助手未在运行", Toast.LENGTH_SHORT).show()
+            return
+        }
         val intent = Intent(this, TriggerForegroundService::class.java).apply {
             action = TriggerForegroundService.ACTION_STOP
         }
         startService(intent)
         Toast.makeText(this, "助手已停止", Toast.LENGTH_SHORT).show()
-        mainHandler.postDelayed({ refreshStatus() }, 500)
+        mainHandler.postDelayed({ refreshStatus() }, 300)
+        mainHandler.postDelayed({ refreshStatus() }, 1000)
     }
 
     private fun requestNotificationPermission() {

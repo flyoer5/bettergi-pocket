@@ -46,6 +46,8 @@ object RootBridge {
     private var suPath: String? = null
 
     @Volatile
+    private var connecting = false
+    @Volatile
     private var userStopped = false
     @Volatile
     private var reconnectPending = false
@@ -61,10 +63,22 @@ object RootBridge {
 
     fun isRunning(): Boolean = running
 
+    /** 是否正在连接 helper（用于 UI 显示「连接中…」而非误导性的「未连接」）。 */
+    fun isConnecting(): Boolean = connecting
+
     /** 启动 helper 并完成握手；成功返回 true。失败路径统一清理资源（不残留 helper）。 */
     @Synchronized
     fun start(): Boolean {
         val ctx = appContext ?: return false
+        connecting = true
+        try {
+            return startLocked(ctx)
+        } finally {
+            connecting = false
+        }
+    }
+
+    private fun startLocked(ctx: Context): Boolean {
         cleanupResources()
 
         val dir = File(ctx.filesDir, "root")
@@ -262,6 +276,7 @@ object RootBridge {
     fun stop() {
         if (running) AppLog.i(TAG, "root 后端停止")
         userStopped = true
+        connecting = false
         cleanupResources()
     }
 

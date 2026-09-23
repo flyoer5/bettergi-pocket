@@ -101,16 +101,15 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="注入通道"
+                    android:text="助手状态"
                     android:textColor="@color/overlay_text_muted"
                     android:textSize="14sp" />
 
                 <TextView
-                    android:id="@+id/status_inject"
+                    android:id="@+id/status_assistant"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="input"
-                    android:textColor="@color/overlay_text"
+                    android:text="--"
                     android:textSize="14sp" />
             </LinearLayout>
 
@@ -284,41 +283,5 @@
                 android:text="停止助手" />
         </LinearLayout>
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:gravity="center"
-            android:text="启动后通过悬浮球操作；点悬浮球展开面板"
-            android:textColor="@color/overlay_text_muted"
-            android:textSize="12sp" />
-
-        <!-- 关于 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="@drawable/home_card"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="关于"
-                android:textColor="@color/overlay_gold"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/about_text"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:lineSpacingExtra="4dp"
-                android:text="原神自动化助手 · ROOT 注入版"
-                android:textColor="@color/overlay_text_muted"
-                android:textSize="12sp" />
-        </LinearLayout>
     </LinearLayout>
 </ScrollView>
