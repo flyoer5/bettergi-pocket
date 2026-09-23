@@ -32,9 +32,6 @@ enum class AdvancedParam(
     FAST_TICK("adv_fast_tick", "节奏", "识别快帧率", "ms", 50.0, 1000.0, true, 200.0),
     SLOW_TICK("adv_slow_tick", "节奏", "识别慢帧率", "ms", 100.0, 3000.0, true, 600.0),
 
-    // ---- 点击 ----
-    CLICK_DURATION("adv_click_duration", "点击", "点击时长", "ms", 10.0, 500.0, true, 50.0),
-
     // ---- 连接（root）----
     CONNECT_TIMEOUT("adv_connect_timeout", "连接", "连接超时", "ms", 1000.0, 15000.0, true, 4000.0),
     RECONNECT_DELAY("adv_reconnect_delay", "连接", "重连等待", "ms", 500.0, 15000.0, true, 2000.0),
@@ -59,7 +56,6 @@ enum class AdvancedParam(
         BLACK_CLICK_INTERVAL -> settings.blackClickIntervalMs.toDouble()
         FAST_TICK -> settings.fastTickMs.toDouble()
         SLOW_TICK -> settings.slowTickMs.toDouble()
-        CLICK_DURATION -> settings.clickDurationMs.toDouble()
         CONNECT_TIMEOUT -> settings.connectTimeoutMs.toDouble()
         RECONNECT_DELAY -> settings.reconnectDelayMs.toDouble()
         MAX_RECONNECT -> settings.maxReconnectAttempts.toDouble()
@@ -83,7 +79,6 @@ enum class AdvancedParam(
             BLACK_CLICK_INTERVAL -> settings.copy(blackClickIntervalMs = v.toLong())
             FAST_TICK -> settings.copy(fastTickMs = v.toLong())
             SLOW_TICK -> settings.copy(slowTickMs = v.toLong())
-            CLICK_DURATION -> settings.copy(clickDurationMs = v.toLong())
             CONNECT_TIMEOUT -> settings.copy(connectTimeoutMs = v.toLong())
             RECONNECT_DELAY -> settings.copy(reconnectDelayMs = v.toLong())
             MAX_RECONNECT -> settings.copy(maxReconnectAttempts = v.toInt())
