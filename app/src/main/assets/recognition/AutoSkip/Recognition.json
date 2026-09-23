@@ -55,6 +55,19 @@
       "search": {
         "box": "rect(900, 90, 1000, 950)"
       }
+    },
+    "TalkHistoryLabel": {
+      "type": "Ocr",
+      "reference": {
+        "size": [
+          3040,
+          1904
+        ],
+        "bbox": "rect(0, 40, 365, 130)"
+      },
+      "search": {
+        "box": "rect(0, 40, 365, 130)"
+      }
     }
   }
 }

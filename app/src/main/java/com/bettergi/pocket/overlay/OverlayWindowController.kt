@@ -921,7 +921,7 @@ class OverlayWindowController(
                     syncSpControls()
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
         spCrosshairView = crosshair
@@ -949,7 +949,7 @@ class OverlayWindowController(
                     try { windowManager.updateViewLayout(picker, lp) } catch (_: Throwable) {}
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
         picker.findViewById<View>(R.id.sp_picker_close).setOnClickListener { hideSkipPositionPicker() }
@@ -1061,7 +1061,7 @@ class OverlayWindowController(
                     persistLogPosition(lp)
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
     }
@@ -1133,7 +1133,7 @@ class OverlayWindowController(
                     persistPosition(lp)
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
     }
@@ -1196,7 +1196,7 @@ class OverlayWindowController(
                     if (!expanded) scheduleIdleFade()
                     true
                 }
-                else -> false
+                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
             }
         }
     }

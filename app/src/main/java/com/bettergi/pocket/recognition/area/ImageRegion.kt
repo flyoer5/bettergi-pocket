@@ -97,6 +97,7 @@ open class ImageRegion(
                             "ROI位置${search.effectiveRoi.x}x${search.effectiveRoi.y}," +
                             "区域${search.effectiveRoi.width}x${search.effectiveRoi.height},边界溢出！",
                     )
+                    return Region()
                 }
                 ownedRoiView = MatOps.roiView(source, search.effectiveRoi)
                 roi = ownedRoiView
@@ -149,6 +150,13 @@ open class ImageRegion(
             val source = templateMatchSource(ro).also { if (it !== cacheGreyMatSafe && it !== srcMat) ownedSource = it }
             var roi = source
             if (!search.effectiveRoi.isDefault()) {
+                if (!isRoiInside(source, search.effectiveRoi)) {
+                    Log.e(
+                        TAG,
+                        "多目标模板 ${ro.name} 搜索区域 ${search.effectiveRoi} 溢出图像边界，跳过本帧",
+                    )
+                    return emptyList()
+                }
                 ownedRoiView = MatOps.roiView(source, search.effectiveRoi)
                 roi = ownedRoiView
             }
@@ -334,6 +342,8 @@ open class ImageRegion(
         cacheGreyMat = null
         if (ownsMat) {
             srcMat.release()
+            // 置为空 Mat 占位：防止误用已释放的 Mat（访问已释放 Mat 是未定义行为）
+            srcMat = Mat()
         }
     }
 
