@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.abs
 
 class TriggerSettingsRepository(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -85,7 +86,17 @@ class TriggerSettingsRepository(context: Context) {
         update { it.copy(quickSkipCustomPosition = false) }
     }
 
+    /** 设置单个高级参数（自动按范围 clamp）。 */
+    fun setAdvanced(param: AdvancedParam, value: Double) {
+        update { param.apply(it, value) }
+    }
 
+    /** 全部高级参数恢复默认值。 */
+    fun resetAdvanced() {
+        update { settings ->
+            AdvancedParam.entries.fold(settings) { acc, p -> p.apply(acc, p.default) }
+        }
+    }
 
     private fun update(transform: (TriggerSettings) -> TriggerSettings) {
         val newValue: TriggerSettings
@@ -95,20 +106,23 @@ class TriggerSettingsRepository(context: Context) {
             if (updated == old) return
             current = updated
             newValue = updated
-            prefs.edit()
-                .putBoolean(KEY_SCREEN_SHARE, updated.screenShareEnabled)
-                .putBoolean(KEY_AUTO_PICK, updated.autoPickEnabled)
-                .putBoolean(KEY_AUTO_SKIP, updated.autoSkipEnabled)
-                .putBoolean(KEY_QUICK_SKIP, updated.quickSkipDialogueEnabled)
-                .putBoolean(KEY_AUTO_LAUNCH_GENSHIN, updated.autoLaunchGenshinEnabled)
-                .putBoolean(KEY_SMART_OPTION, updated.smartOptionEnabled)
-                .putBoolean(KEY_BLACK_SCREEN, updated.blackScreenClickEnabled)
-                .putBoolean(KEY_TAP_INDICATOR, updated.showTapIndicator)
-                .putBoolean(KEY_EXCLAMATION, updated.exclamationClickEnabled)
-                .putBoolean(KEY_QUICK_SKIP_CUSTOM, updated.quickSkipCustomPosition)
-                .putFloat(KEY_QUICK_SKIP_X, updated.quickSkipPositionX)
-                .putFloat(KEY_QUICK_SKIP_Y, updated.quickSkipPositionY)
-                .apply()
+            prefs.edit().apply {
+                putBoolean(KEY_SCREEN_SHARE, updated.screenShareEnabled)
+                putBoolean(KEY_AUTO_PICK, updated.autoPickEnabled)
+                putBoolean(KEY_AUTO_SKIP, updated.autoSkipEnabled)
+                putBoolean(KEY_QUICK_SKIP, updated.quickSkipDialogueEnabled)
+                putBoolean(KEY_AUTO_LAUNCH_GENSHIN, updated.autoLaunchGenshinEnabled)
+                putBoolean(KEY_SMART_OPTION, updated.smartOptionEnabled)
+                putBoolean(KEY_BLACK_SCREEN, updated.blackScreenClickEnabled)
+                putBoolean(KEY_TAP_INDICATOR, updated.showTapIndicator)
+                putBoolean(KEY_EXCLAMATION, updated.exclamationClickEnabled)
+                putBoolean(KEY_QUICK_SKIP_CUSTOM, updated.quickSkipCustomPosition)
+                putFloat(KEY_QUICK_SKIP_X, updated.quickSkipPositionX)
+                putFloat(KEY_QUICK_SKIP_Y, updated.quickSkipPositionY)
+                AdvancedParam.entries.forEach { p ->
+                    putFloat(p.key, p.read(updated).toFloat())
+                }
+            }.apply()
         }
         val gen = generation
         listeners.forEach { listener ->
@@ -120,20 +134,32 @@ class TriggerSettingsRepository(context: Context) {
         }
     }
 
-    private fun readFromPrefs(): TriggerSettings = TriggerSettings(
-        screenShareEnabled = false,
-        autoPickEnabled = prefs.getBoolean(KEY_AUTO_PICK, false),
-        autoSkipEnabled = prefs.getBoolean(KEY_AUTO_SKIP, false),
-        quickSkipDialogueEnabled = prefs.getBoolean(KEY_QUICK_SKIP, true),
-        autoLaunchGenshinEnabled = prefs.getBoolean(KEY_AUTO_LAUNCH_GENSHIN, false),
-        smartOptionEnabled = prefs.getBoolean(KEY_SMART_OPTION, true),
-        blackScreenClickEnabled = prefs.getBoolean(KEY_BLACK_SCREEN, true),
-        showTapIndicator = prefs.getBoolean(KEY_TAP_INDICATOR, false),
-        exclamationClickEnabled = prefs.getBoolean(KEY_EXCLAMATION, true),
-        quickSkipCustomPosition = prefs.getBoolean(KEY_QUICK_SKIP_CUSTOM, false),
-        quickSkipPositionX = prefs.getFloat(KEY_QUICK_SKIP_X, 0.5f),
-        quickSkipPositionY = prefs.getFloat(KEY_QUICK_SKIP_Y, 0.99f),
-    )
+    private fun readFromPrefs(): TriggerSettings {
+        var settings = TriggerSettings(
+            screenShareEnabled = false,
+            autoPickEnabled = prefs.getBoolean(KEY_AUTO_PICK, false),
+            autoSkipEnabled = prefs.getBoolean(KEY_AUTO_SKIP, false),
+            quickSkipDialogueEnabled = prefs.getBoolean(KEY_QUICK_SKIP, true),
+            autoLaunchGenshinEnabled = prefs.getBoolean(KEY_AUTO_LAUNCH_GENSHIN, false),
+            smartOptionEnabled = prefs.getBoolean(KEY_SMART_OPTION, true),
+            blackScreenClickEnabled = prefs.getBoolean(KEY_BLACK_SCREEN, true),
+            showTapIndicator = prefs.getBoolean(KEY_TAP_INDICATOR, false),
+            exclamationClickEnabled = prefs.getBoolean(KEY_EXCLAMATION, true),
+            quickSkipCustomPosition = prefs.getBoolean(KEY_QUICK_SKIP_CUSTOM, false),
+            quickSkipPositionX = prefs.getFloat(KEY_QUICK_SKIP_X, 0.5f),
+            quickSkipPositionY = prefs.getFloat(KEY_QUICK_SKIP_Y, 0.99f),
+        )
+        // 高级参数：prefs 无记录时用默认值，有记录时覆盖
+        AdvancedParam.entries.forEach { p ->
+            if (prefs.contains(p.key)) {
+                val v = prefs.getFloat(p.key, p.default.toFloat()).toDouble()
+                if (abs(v - p.read(settings)) > 0.000001) {
+                    settings = p.apply(settings, v)
+                }
+            }
+        }
+        return settings
+    }
 
     private companion object {
         const val PREFS_NAME = "trigger_settings"

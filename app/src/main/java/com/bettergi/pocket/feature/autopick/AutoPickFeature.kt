@@ -22,7 +22,7 @@ class AutoPickFeature : TriggerFeature {
         val now = System.currentTimeMillis()
         if (now < nextClickAtMs) return
         val (x, y) = screenBottomCenter(tick.screenWidth, tick.screenHeight)
-        actions.emit(ClickAction(x, y))
+        actions.emit(ClickAction(x, y, settings.clickDurationMs))
         nextClickAtMs = now + CLICK_INTERVAL_MS
     }
 

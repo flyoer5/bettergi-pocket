@@ -98,7 +98,7 @@ class TriggerEngine(
             }
 
             val now = System.currentTimeMillis()
-            val interval = if (now - lastActionAtMs < ACTIVE_WINDOW_MS) FAST_TICK_MS else SLOW_TICK_MS
+            val interval = if (now - lastActionAtMs < ACTIVE_WINDOW_MS) settings.fastTickMs else settings.slowTickMs
             handler.postDelayed(this, interval)
         }
     }

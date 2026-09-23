@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import com.bettergi.pocket.log.AppLog
+import com.bettergi.pocket.settings.TriggerSettingsRepository
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -28,6 +29,9 @@ object RootBridge {
     private const val CONNECT_TIMEOUT_MS = 4000L
     private const val PING_TIMEOUT_MS = 3000L
     private const val RECONNECT_DELAY_MS = 2000L
+    private const val HOT_CONNECT_VERIFY_MS = 1200L
+    private const val PREFS_NAME = "root_bridge"
+    private const val KEY_SU_PATH = "su_path"
     private const val MAX_RECONNECT_ATTEMPTS = 5
 
     @Volatile
@@ -42,6 +46,7 @@ object RootBridge {
     private var helperProcess: Process? = null
 
     private var appContext: Context? = null
+    private var settingsRepository: TriggerSettingsRepository? = null
     @Volatile
     private var suPath: String? = null
 
@@ -59,6 +64,7 @@ object RootBridge {
 
     fun attach(context: Context) {
         appContext = context.applicationContext
+        settingsRepository = TriggerSettingsRepository(context.applicationContext)
     }
 
     fun isRunning(): Boolean = running
@@ -79,15 +85,19 @@ object RootBridge {
     }
 
     private fun startLocked(ctx: Context): Boolean {
+        val dir = File(ctx.filesDir, "root")
+        val sockPath = File(dir, "sock").absolutePath
+
+        // 快路径：helper 仍存活时直接复用 socket（app 重开秒连，跳过 su 探测/清理/重启）
+        if (tryHotConnect(sockPath)) return true
+
         cleanupResources()
 
-        val dir = File(ctx.filesDir, "root")
         dir.mkdirs()
         val helper = File(dir, "bgroot")
         if (!releaseHelper(helper)) return false
         helper.setExecutable(true, false)
 
-        val sockPath = File(dir, "sock").absolutePath
         File(sockPath).delete()
 
         val su = resolveSu()
@@ -110,7 +120,8 @@ object RootBridge {
         helperProcess = process
         drainHelperOutput(process, "helper")
 
-        val deadline = System.currentTimeMillis() + CONNECT_TIMEOUT_MS
+        val connectTimeout = settingsRepository?.get()?.connectTimeoutMs ?: CONNECT_TIMEOUT_MS
+        val deadline = System.currentTimeMillis() + connectTimeout
         var firstFail = true
         while (System.currentTimeMillis() < deadline) {
             Thread.sleep(60)
@@ -123,7 +134,7 @@ object RootBridge {
             socket = s
             output = s.outputStream
             reader = BufferedReader(InputStreamReader(s.inputStream), 1024)
-            val pong = request("PING", PING_TIMEOUT_MS)?.trim()
+            val pong = request("PING", 3000L)?.trim()
             if (pong == "OK pong" || pong == "pong") {
                 running = true
                 userStopped = false
@@ -145,6 +156,16 @@ object RootBridge {
     private fun resolveSu(): String {
         suPath?.let { return it }
         val ctx = appContext ?: return "su"
+        val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        // 先用上次成功解析的路径（一次校验，通常 100~300ms，避免逐个候选探测）
+        prefs.getString(KEY_SU_PATH, null)?.let { cached ->
+            if (runCommand(ctx, "test -x $cached && echo yes", 1200L)?.trim() == "yes") {
+                suPath = cached
+                return cached
+            }
+        }
+
         val candidates = listOf(
             "/system/bin/su",
             "/system/xbin/su",
@@ -155,11 +176,14 @@ object RootBridge {
         for (p in candidates) {
             if (runCommand(ctx, "test -x $p && echo yes", 1500L)?.trim() == "yes") {
                 suPath = p
+                prefs.edit().putString(KEY_SU_PATH, p).apply()
                 return p
             }
         }
         val found = runCommand(ctx, "command -v su", 1500L)?.trim()
-        return if (!found.isNullOrEmpty()) found else "su"
+        val result = if (!found.isNullOrEmpty()) found else "su"
+        prefs.edit().putString(KEY_SU_PATH, result).apply()
+        return result
     }
 
     /** 释放 helper：先写临时文件再 rename 替换（旧进程持有的 inode 换新，避免 ETXTBSY） */
@@ -200,6 +224,40 @@ object RootBridge {
             runCatching { s?.close() }
             if (logFailure) AppLog.w(TAG, "连接 $path 失败: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * 热连接：helper 已存活时复用其 socket，避免重建（显著加快 app 重开后的连接）。
+     * 二次确认（1.2s 后再次 PING）以排除「旧 app 实例遗留、即将自退」的 helper。
+     */
+    private fun tryHotConnect(sockPath: String): Boolean {
+        val s = tryConnect(sockPath) ?: return false
+        return try {
+            socket = s
+            output = s.outputStream
+            reader = BufferedReader(InputStreamReader(s.inputStream), 1024)
+            val pong = request("PING", 1000L)?.trim()
+            if (pong != "OK pong" && pong != "pong") {
+                cleanupResources()
+                return false
+            }
+            Thread.sleep(HOT_CONNECT_VERIFY_MS)
+            val again = request("PING", 1000L)?.trim()
+            if (again != "OK pong" && again != "pong") {
+                // helper 属于旧实例、正在自退：转慢路径重建
+                cleanupResources()
+                return false
+            }
+            running = true
+            userStopped = false
+            consecutiveFailures = 0
+            AppLog.i(TAG, "root 热连接成功（复用存活 helper）")
+            applyKeepAlive()
+            true
+        } catch (_: Exception) {
+            cleanupResources()
+            false
         }
     }
 
@@ -324,6 +382,9 @@ object RootBridge {
     private fun scheduleReconnect() {
         if (reconnectPending) return
         reconnectPending = true
+        val settings = settingsRepository?.get()
+        val delayMs = settings?.reconnectDelayMs ?: RECONNECT_DELAY_MS
+        val maxAttempts = settings?.maxReconnectAttempts ?: MAX_RECONNECT_ATTEMPTS
         reconnectExecutor.schedule({
             reconnectPending = false
             if (userStopped || appContext == null) return@schedule
@@ -332,13 +393,13 @@ object RootBridge {
                 consecutiveFailures = 0
             } else {
                 consecutiveFailures++
-                if (consecutiveFailures < MAX_RECONNECT_ATTEMPTS) {
+                if (consecutiveFailures < maxAttempts) {
                     scheduleReconnect()
                 } else {
                     AppLog.e(TAG, "root 自动重连失败 $consecutiveFailures 次，停止自动重试（可点击状态栏手动重连）")
                 }
             }
-        }, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS)
+        }, delayMs, TimeUnit.MILLISECONDS)
     }
 
     /** 逐行消费 helper 的 stdout/stderr：写满管道会阻塞 helper 主循环，必须读 */

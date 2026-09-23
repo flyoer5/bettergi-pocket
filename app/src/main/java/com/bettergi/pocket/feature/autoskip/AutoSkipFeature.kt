@@ -71,21 +71,21 @@ class AutoSkipFeature(
 
         when (state) {
             State.IDLE -> {
-                if (inDialogue(content)) {
+                if (inDialogue(content, settings)) {
                     events?.onTalkHistoryMatched()
                     state = State.IN_DIALOG
                     return
                 }
-                if (settings.blackScreenClickEnabled) clickBlackScreenIfNeeded(content, actions)
+                if (settings.blackScreenClickEnabled) clickBlackScreenIfNeeded(content, actions, settings)
                 val idleNow = System.currentTimeMillis()
-                if (idleNow - lastIdleLogMs >= IDLE_LOG_INTERVAL_MS) {
+                if (idleNow - lastIdleLogMs >= settings.idleLogIntervalMs) {
                     lastIdleLogMs = idleNow
                     events?.onIdleScan()
                 }
             }
 
             State.IN_DIALOG -> {
-                if (!inDialogue(content)) {
+                if (!inDialogue(content, settings)) {
                     state = State.IDLE
                     return
                 }
@@ -100,28 +100,28 @@ class AutoSkipFeature(
                     }
                     val skipNow = System.currentTimeMillis()
                     // 点击节流：避免每帧狂点干扰手动操作（500ms 一次足够逐行跳过对话）
-                    if (skipNow - lastSkipClickMs >= SKIP_CLICK_INTERVAL_MS) {
+                    if (skipNow - lastSkipClickMs >= settings.skipClickIntervalMs) {
                         lastSkipClickMs = skipNow
-                        if (skipNow - lastSkipLogMs >= SKIP_LOG_INTERVAL_MS) {
+                        if (skipNow - lastSkipLogMs >= settings.skipLogIntervalMs) {
                             lastSkipLogMs = skipNow
                             events?.onAutoSkipLog("点击跳过 ($skipX, $skipY)")
                         }
-                        actions.emit(ClickAction(skipX, skipY))
+                        actions.emit(ClickAction(skipX, skipY, settings.clickDurationMs))
                     }
                 }
 
                 val now = System.currentTimeMillis()
-                if (now < clickedAtMs + CONFIRM_WINDOW_MS && clickedOptionY >= 0) return
+                if (now < clickedAtMs + settings.confirmWindowMs && clickedOptionY >= 0) return
 
                 // 1) 感叹号选项：优先级最高，命中直接点
-                val excls = content.findMulti(
-                    assets.get(TASK_NAME, "ExclamationIcon", content.captureRectArea),
-                )
+                val exclamationRo = assets.get(TASK_NAME, "ExclamationIcon", content.captureRectArea)
+                exclamationRo.threshold = settings.exclamationThreshold
+                val excls = content.findMulti(exclamationRo)
                 if (settings.smartOptionEnabled && settings.exclamationClickEnabled && excls.isNotEmpty()) {
                     val (x, y) = excls[0].centerOnNativeCapture()
                     Log.i(TAG, "click exclamation option at $x,$y")
                     events?.onAutoSkipLog("点击感叹号选项 ($x, $y)")
-                    actions.emit(ClickAction(x, y))
+                    actions.emit(ClickAction(x, y, settings.clickDurationMs))
                     events?.onChatIconClicked(x, y)
                     clickedOptionY = excls[0].y
                     clickedAtMs = now
@@ -130,13 +130,13 @@ class AutoSkipFeature(
                 }
 
                 // 2) 普通选项：OCR 读文字 + 关键词/橙色决策（节流 1s）
-                if (now - lastOptionDecisionAtMs < OPTION_DECISION_INTERVAL_MS) return
+                if (now - lastOptionDecisionAtMs < settings.optionDecisionIntervalMs) return
                 lastOptionDecisionAtMs = now
 
                 val chatIcon = assets.get(TASK_NAME, "ChatIcon", content.captureRectArea)
                 val hits = content.findMulti(chatIcon)
                 val decision = if (settings.smartOptionEnabled) {
-                    decideOption(content, hits)
+                    decideOption(content, hits, settings)
                 } else {
                     selectTopChatIcon(hits)?.let { Decision(it) }
                 } ?: return
@@ -145,7 +145,7 @@ class AutoSkipFeature(
                 events?.onChatIconsRecognized(hits.size, topX, topY)
 
                 Log.i(TAG, "click option at $topX,$topY")
-                actions.emit(ClickAction(topX, topY))
+                actions.emit(ClickAction(topX, topY, settings.clickDurationMs))
                 events?.onChatIconClicked(topX, topY)
                 clickedOptionY = target.y
                 clickedAtMs = now
@@ -153,7 +153,7 @@ class AutoSkipFeature(
             }
 
             State.CONFIRMING -> {
-                if (!inDialogue(content)) {
+                if (!inDialogue(content, settings)) {
                     events?.onAutoSkipLog("对话已结束（点击生效）")
                     state = State.IDLE
                     return
@@ -170,8 +170,8 @@ class AutoSkipFeature(
                     clickedOptionY = -1
                     return
                 }
-                if (now - clickedAtMs >= CONFIRM_TIMEOUT_MS) {
-                    Log.w(TAG, "option did not change within ${CONFIRM_TIMEOUT_MS}ms, allow retry")
+                if (now - clickedAtMs >= settings.confirmTimeoutMs) {
+                    Log.w(TAG, "option did not change within ${settings.confirmTimeoutMs}ms, allow retry")
                     events?.onAutoSkipLog("选项未变化，超时重试")
                     state = State.IN_DIALOG
                     clickedAtMs = 0L
@@ -183,9 +183,13 @@ class AutoSkipFeature(
     }
 
     /** 黑屏转场检测：非对话时画面中部 1/3 区域接近全黑则点击推进（移植 PC 版）。 */
-    private fun clickBlackScreenIfNeeded(content: CaptureContent, actions: ActionEmitter) {
+    private fun clickBlackScreenIfNeeded(
+        content: CaptureContent,
+        actions: ActionEmitter,
+        settings: TriggerSettings,
+    ) {
         val now = System.currentTimeMillis()
-        if (now - lastBlackClickMs < BLACK_CLICK_INTERVAL_MS) return
+        if (now - lastBlackClickMs < settings.blackClickIntervalMs) return
         val region = content.captureRectArea
         val grey = region.cacheGreyMatSafe ?: return
         val w = grey.cols()
@@ -198,10 +202,10 @@ class AutoSkipFeature(
             Core.inRange(roi, Scalar(0.0), Scalar(0.0), mask)
             val black = Core.countNonZero(mask).toDouble()
             val rate = black / (roi.cols() * roi.rows())
-            if (rate >= BLACK_RATE_MIN && rate < BLACK_RATE_MAX) {
+            if (rate >= settings.blackRateMin && rate < settings.blackRateMax) {
                 Log.i(TAG, "black transition detected, rate=$rate, click center")
                 events?.onBlackScreenClicked(w / 2, h / 2)
-                actions.emit(ClickAction(w / 2, h / 2))
+                actions.emit(ClickAction(w / 2, h / 2, settings.clickDurationMs))
                 lastBlackClickMs = now
             }
         } finally {
@@ -211,12 +215,12 @@ class AutoSkipFeature(
     }
 
     /** 对话判定沿用原版：仅以对话历史图标（TalkHistory 模板）命中为准。 */
-    private fun inDialogue(content: CaptureContent): Boolean {
-        if (isTalkHistoryIcon(content, assets)) return true
+    private fun inDialogue(content: CaptureContent, settings: TriggerSettings): Boolean {
+        if (isTalkHistoryIcon(content, assets, settings.talkHistoryThreshold)) return true
 
         // 兜底：图标淡化时 OCR 左侧状态文字，1 秒节流；节流窗口内返回上次结果防状态机抖动
         val now = System.currentTimeMillis()
-        if (now - lastLabelOcrAtMs < TALK_HISTORY_LABEL_OCR_INTERVAL_MS) return lastLabelOcrHit
+        if (now - lastLabelOcrAtMs < settings.labelOcrIntervalMs) return lastLabelOcrHit
         lastLabelOcrAtMs = now
         val hit = findTalkHistoryLabel(content, assets)
         lastLabelOcrHit = hit != null
@@ -232,6 +236,7 @@ class AutoSkipFeature(
     private fun decideOption(
         content: CaptureContent,
         hits: List<Region>,
+        settings: TriggerSettings,
     ): Decision? {
         if (hits.isEmpty()) return null
         val region = content.captureRectArea
@@ -251,7 +256,7 @@ class AutoSkipFeature(
 
         // 先按 Y 坐标排序，再按 PC 的顺序逐项过滤（含相邻行间距检查）
         val sorted = lines.sortedBy { it.y }
-        val maxYGap = (OPTION_MAX_Y_GAP * scale).toInt()
+        val maxYGap = (settings.optionMaxYGap * scale).toInt()
         val rs = sorted.filterIndexed { index, line ->
             val t = line.text ?: return@filterIndexed false
             if (t.isBlank()) return@filterIndexed false
@@ -298,19 +303,6 @@ class AutoSkipFeature(
     companion object {
         const val TASK_NAME = "AutoSkip"
         private const val TAG = "BetterGI.AutoSkip"
-        private const val CONFIRM_WINDOW_MS = 600L
-        private const val CONFIRM_TIMEOUT_MS = 1200L
-        private const val OPTION_DECISION_INTERVAL_MS = 1000L
-        private const val TALK_HISTORY_LABEL_OCR_INTERVAL_MS = 1000L
-
-        /** 相邻选项行 Y 间距上限（1080p 基准，对齐 PC 的 150）。 */
-        private const val OPTION_MAX_Y_GAP = 150
-        private const val BLACK_CLICK_INTERVAL_MS = 1200L
-        private const val BLACK_RATE_MIN = 0.5
-        private const val BLACK_RATE_MAX = 0.98999
-        private const val IDLE_LOG_INTERVAL_MS = 5000L
-        private const val SKIP_LOG_INTERVAL_MS = 5000L
-        private const val SKIP_CLICK_INTERVAL_MS = 500L
 
         fun selectTopChatIcon(hits: List<Region>): Region? = hits.minByOrNull { it.y }
     }

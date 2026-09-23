@@ -20,9 +20,14 @@ fun isTalkHistoryLabelText(text: String): Boolean {
     return tokens.size == 1 && tokens[0] in TALK_HISTORY_LABEL_KEYWORDS
 }
 
-/** 仅模板匹配对话图标，不跑 OCR。 */
-fun isTalkHistoryIcon(content: CaptureContent, assets: RecognitionAssets): Boolean {
+/** 仅模板匹配对话图标，不跑 OCR；threshold 可用高级参数覆盖。 */
+fun isTalkHistoryIcon(
+    content: CaptureContent,
+    assets: RecognitionAssets,
+    threshold: Double = 0.75,
+): Boolean {
     val talkHistory = assets.get(AutoSkipFeature.TASK_NAME, "TalkHistory", content.captureRectArea)
+    talkHistory.threshold = threshold
     return content.find(talkHistory).isExist()
 }
 
