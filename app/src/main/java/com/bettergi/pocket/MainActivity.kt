@@ -1,7 +1,6 @@
 package com.bettergi.pocket
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -12,26 +11,26 @@ import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
-import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import androidx.appcompat.widget.SwitchCompat
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.bettergi.pocket.R
 import com.bettergi.pocket.root.RootBridge
+import com.bettergi.pocket.service.TriggerForegroundService
 import com.bettergi.pocket.settings.AdvancedParam
 import com.bettergi.pocket.settings.TriggerSettings
 import com.bettergi.pocket.settings.TriggerSettingsRepository
 
 /**
- * App 主页：功能设置 + 高级参数 + 状态摘要 + 权限引导。
- * 与悬浮球共用同一份设置，改动实时同步；悬浮球 UI 不受影响。
+ * App 主页：状态摘要 + 高级参数 + 权限引导。
+ *
+ * 功能开关（屏幕共享/自动对话等）统一在悬浮球面板操作，本页只承载
+ * 悬浮球里没有的能力：写死参数的可视化配置与权限状态。
  */
 class MainActivity : AppCompatActivity() {
 
@@ -42,12 +41,10 @@ class MainActivity : AppCompatActivity() {
     private var updatingUi = false
 
     private lateinit var statusSummary: TextView
-    private lateinit var settingsContainer: LinearLayout
     private lateinit var advancedContainer: LinearLayout
     private lateinit var permissionOverlayState: TextView
     private lateinit var permissionNotificationState: TextView
 
-    private val switchViews = mutableMapOf<SwitchSpec, SwitchCompat>()
     private val editViews = mutableMapOf<AdvancedParam, EditText>()
 
     private val requestPostNotifications =
@@ -59,7 +56,6 @@ class MainActivity : AppCompatActivity() {
         settingsRepository = TriggerSettingsRepository(applicationContext)
 
         statusSummary = findViewById(R.id.status_summary)
-        settingsContainer = findViewById(R.id.settings_container)
         advancedContainer = findViewById(R.id.advanced_container)
         permissionOverlayState = findViewById(R.id.permission_overlay_state)
         permissionNotificationState = findViewById(R.id.permission_notification_state)
@@ -82,7 +78,6 @@ class MainActivity : AppCompatActivity() {
             requestNotificationPermission()
         }
 
-        buildSwitchRows()
         buildAdvancedRows()
 
         settingsRepository.addListener { syncUi(it) }
@@ -103,43 +98,7 @@ class MainActivity : AppCompatActivity() {
         stopRefreshLoop()
     }
 
-    // ---- UI 构建 ----
-
-    private fun buildSwitchRows() {
-        for (spec in SwitchSpec.all) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                )
-                if (switchViews.isNotEmpty()) {
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                    ).apply { topMargin = dp(10) }
-                }
-            }
-            val label = TextView(this).apply {
-                text = spec.title
-                textSize = 14f
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.overlay_text))
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            }
-            val sw = SwitchCompat(this).apply {
-                isChecked = spec.get(settingsRepository.get())
-                setOnCheckedChangeListener { _, isChecked ->
-                    if (updatingUi) return@setOnCheckedChangeListener
-                    spec.set(settingsRepository, isChecked)
-                }
-            }
-            row.addView(label)
-            row.addView(sw)
-            settingsContainer.addView(row)
-            switchViews[spec] = sw
-        }
-    }
+    // ---- 高级参数 UI ----
 
     private fun buildAdvancedRows() {
         for (group in AdvancedParam.GROUPS) {
@@ -174,8 +133,6 @@ class MainActivity : AppCompatActivity() {
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 }
                 val editor = EditText(this).apply {
-                    val unit = if (param.unit.isNotEmpty()) " ${param.unit}" else ""
-                    hint = unit.trim()
                     setText(param.format(param.read(settingsRepository.get())))
                     textSize = 13f
                     gravity = Gravity.END
@@ -185,7 +142,6 @@ class MainActivity : AppCompatActivity() {
                         InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
                     }
                     setTextColor(ContextCompat.getColor(this@MainActivity, R.color.overlay_text))
-                    setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.overlay_text_muted))
                     background = null
                     minWidth = dp(90)
                     maxLines = 1
@@ -245,14 +201,9 @@ class MainActivity : AppCompatActivity() {
         editor.setText(param.format(clamped))
     }
 
-    // ---- 同步 ----
-
     private fun syncUi(settings: TriggerSettings) {
         updatingUi = true
         try {
-            for ((spec, sw) in switchViews) {
-                sw.isChecked = spec.get(settings)
-            }
             for ((param, editor) in editViews) {
                 if (editor.hasFocus()) continue
                 editor.setText(param.format(param.read(settings)))
@@ -274,7 +225,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ---- 状态刷新 ----
+    // ---- 状态 ----
 
     private fun startRefreshLoop() {
         stopRefreshLoop()
@@ -323,15 +274,13 @@ class MainActivity : AppCompatActivity() {
         permissionNotificationState.setTextColor(if (notificationOk) on else warn)
     }
 
-    // ---- 助手 ----
+    // ---- 助手 / 权限 ----
 
     private fun startAssistantSilently() {
-        if (Settings.canDrawOverlays(this)) {
-            val intent = Intent(this, com.bettergi.pocket.service.TriggerForegroundService::class.java).apply {
-                action = com.bettergi.pocket.service.TriggerForegroundService.ACTION_START
-            }
-            ContextCompat.startForegroundService(this, intent)
+        val intent = Intent(this, TriggerForegroundService::class.java).apply {
+            action = TriggerForegroundService.ACTION_START
         }
+        ContextCompat.startForegroundService(this, intent)
     }
 
     private fun requestNotificationPermission() {
@@ -368,25 +317,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
-
-    private data class SwitchSpec(
-        val title: String,
-        val get: (TriggerSettings) -> Boolean,
-        val set: (TriggerSettingsRepository, Boolean) -> Unit,
-    ) {
-        companion object {
-            val all = listOf(
-                SwitchSpec("屏幕共享", { it.screenShareEnabled }, { r, v -> r.setScreenShareEnabled(v) }),
-                SwitchSpec("自动对话", { it.autoSkipEnabled }, { r, v -> r.setAutoSkipEnabled(v) }),
-                SwitchSpec("快速跳过", { it.quickSkipDialogueEnabled }, { r, v -> r.setQuickSkipDialogueEnabled(v) }),
-                SwitchSpec("智能选项", { it.smartOptionEnabled }, { r, v -> r.setSmartOptionEnabled(v) }),
-                SwitchSpec("黑屏转场", { it.blackScreenClickEnabled }, { r, v -> r.setBlackScreenClickEnabled(v) }),
-                SwitchSpec("点击指示", { it.showTapIndicator }, { r, v -> r.setShowTapIndicator(v) }),
-                SwitchSpec("感叹号点击", { it.exclamationClickEnabled }, { r, v -> r.setExclamationClickEnabled(v) }),
-                SwitchSpec("自动启动原神", { it.autoLaunchGenshinEnabled }, { r, v -> r.setAutoLaunchGenshinEnabled(v) }),
-            )
-        }
-    }
 
     private companion object {
         const val REFRESH_INTERVAL_MS = 1000L
