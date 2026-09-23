@@ -48,7 +48,11 @@ class TriggerForegroundService : Service() {
     @Volatile
     private var shutDown = false
 
+    private var lastSettings: TriggerSettings? = null
+
     private val settingsListener: (TriggerSettings) -> Unit = { settings ->
+        val previous = lastSettings
+        lastSettings = settings
         if (settings.screenShareEnabled) {
             if (!captureController.isRunning()) {
                 requestCapturePermission()
@@ -56,6 +60,10 @@ class TriggerForegroundService : Service() {
             engine.start()
         } else {
             stopScreenShare()
+        }
+        // 自动启动原神：开关打开时立即生效，无需重启助手
+        if (settings.autoLaunchGenshinEnabled && previous?.autoLaunchGenshinEnabled != true) {
+            genshinLaunchMonitor.tryLaunchNow()
         }
     }
 
