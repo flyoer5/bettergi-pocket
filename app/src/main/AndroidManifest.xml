@@ -34,8 +34,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:excludeFromRecents="true"
-            android:theme="@style/Theme.BetterGIPocket.Transparent">
+            android:theme="@style/Theme.BetterGIPocket.Home">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
