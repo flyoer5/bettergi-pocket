@@ -6,7 +6,7 @@ package com.bettergi.pocket.overlay
  * 已知架构债（后续拆分方向，避免本文件继续膨胀）：
  * - 悬浮窗生命周期（show/hide/拖动/贴边）与 UI 绑定耦合，可拆为 OverlayWindow
  * - 日志窗口（logSink/appendLogLine/renderLogs/日志过滤）可拆为 LogWindowPanel
- * - 快速跳过位置选择器（spPicker*/crosshair/SeekBar）可拆为 SkipPositionPicker
+ * - 快速跳过位置选择器（spPicker 控件/十字线/SeekBar）可拆为 SkipPositionPicker
  * - 高级参数面板（sp* 相关 + AdvancedParam UI）可拆为 AdvancedParamPanel
  * 拆分时注意：本类持有 windowManager/displayManager/settingsRepository 等共享依赖，
  * 拆出去的组件应通过构造器注入，避免静态引用。
