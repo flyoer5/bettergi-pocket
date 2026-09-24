@@ -8,18 +8,23 @@
  *
  * 模式：
  *   --probe [--hold 秒]                创建设备并保持（验证用）
- *   --tap X Y [--dur MS]               单次点击后退出
- *   --swipe X1 Y1 X2 Y2 [--dur MS]     滑动后退出
+ *   --tap X Y [--dur MS]               单次点击后退出（uinput 直发，验证用）
+ *   --swipe X1 Y1 X2 Y2 [--dur MS]     滑动后退出（uinput 直发，验证用）
  *   --server --sock PATH [--uid UID] [--app-pid PID]
  *          socket 文件 chown 给 --uid，仅该 app 可连
  *          常驻；仅接受 --uid 进程连接，app 消失自动退出
  *
+ * server 模式输入注入：统一走系统 input 命令（InputManager 正规管线）。
+ * 不创建 uinput 虚拟触摸设备：独立的 DIRECT 触摸设备产生 DOWN 时，
+ * 系统可能对窗口进行中的手势发 ACTION_CANCEL，导致用户拖动断触。
+ *
  * 协议（行文本，回复 OK / ERR <原因>）：
  *   PING                -> OK pong
- *   PROBE               -> OK <w> <h> uinput
- *   TAP x y dur         -> OK
- *   SWIPE x1 y1 x2 y2 dur -> OK
- *   LONG x y dur        -> OK
+ *   PROBE               -> OK <w> <h> input（server 模式注入可用性探测）
+ *   TAP x y dur         -> OK（server 模式：经 input tap 注入）
+ *   SWIPE x1 y1 x2 y2 dur -> OK（server 模式：经 input swipe 注入）
+ *   LONG x y dur        -> OK（server 模式：经 input swipe 同点按下-抬起模拟长按）
+ *   BACK                -> OK（经 input keyevent 4 注入）
  *   FG                  -> OK <前台包名>
  *   PID <pkg>           -> OK <pid|0>
  *   KEEPALIVE <pkg>     -> OK（电池白名单 + active 待机桶）
@@ -231,6 +236,21 @@ static int valid_pkg(const char *s) {
     return 1;
 }
 
+/* server 模式经 input 命令注入（InputManager 正规管线，等同真实手指）。
+ * 参数由 handle_line 的 %d 解析保证为纯数字，不存在注入面。
+ * 返回 0 成功，-1 失败（命令非零退出）。 */
+static int input_cmd(const char *args) {
+    char cmd[320];
+    snprintf(cmd, sizeof(cmd), "input %s 2>/dev/null", args);
+    FILE *p = popen(cmd, "r");
+    if (!p) return -1;
+    char buf[128];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, p);
+    buf[n] = '\0';
+    int rc = pclose(p);
+    return rc == 0 ? 0 : -1;
+}
+
 /* 解析 dumpsys 里的前台 ActivityRecord，取包名；找不到置空 */
 static void query_foreground(char *out, size_t out_sz) {
     out[0] = '\0';
@@ -243,15 +263,38 @@ static void query_foreground(char *out, size_t out_sz) {
     while (fgets(buf, sizeof(buf), p)) {
         char *start = strchr(buf, '{');
         if (!start) continue;
-        char *mark = strstr(buf, " u0 ");
-        if (!mark) continue;
-        char *pkg = mark + 4;
-        char *slash = strchr(pkg, '/');
-        char *end = slash ? slash : pkg;
+        /* 多用户兜底：优先找 " u<数字> " 用户段（u0 单用户），找不到则回退到
+           不区分用户段（工作资料/多开 u10+ 时也能拿到包名） */
+        char *mark = strchr(buf, ' ');
+        char *pkg_after_user = NULL;
+        while (mark) {
+            if (mark[1] == 'u' && isdigit((unsigned char)mark[2])) {
+                char *sp = &mark[2];
+                while (isdigit((unsigned char)*sp)) sp++;
+                if (*sp == ' ') { pkg_after_user = sp + 1; break; }
+            }
+            mark = strchr(mark + 1, ' ');
+        }
+        const char *pkg_start;
+        if (pkg_after_user) {
+            pkg_start = pkg_after_user;
+        } else {
+            /* 无用户段（非常规格式）：回退到"最后一个 / 前的空格"取组件包名，
+               避免把 ActivityRecord 的 hash 误当包名 */
+            char *fb_slash = strrchr(start + 1, '/');
+            pkg_start = start + 1;
+            if (fb_slash) {
+                char *sp = fb_slash;
+                while (sp > start && *sp != ' ') sp--;
+                if (*sp == ' ') pkg_start = sp + 1;
+            }
+        }
+        char *slash = strchr(pkg_start, '/');
+        char *end = slash ? slash : pkg_start;
         while (*end && *end != ' ' && *end != '}' && *end != '\n') end++;
-        size_t n = (size_t)(end - pkg);
+        size_t n = (size_t)(end - pkg_start);
         if (n > 0 && n < out_sz) {
-            memcpy(out, pkg, n);
+            memcpy(out, pkg_start, n);
             out[n] = '\0';
             break;
         }
@@ -268,28 +311,45 @@ static int handle_line(const char *line, char *resp, size_t resp_sz) {
     }
     if (strncmp(line, "PROBE", 5) == 0) {
         snprintf(resp, resp_sz, "OK %d %d %s\n", scr_w, scr_h,
-                 (ufd >= 0) ? "uinput_ok" : "uinput_fail");
+                 (ufd >= 0) ? "uinput_ok" : "input");
         return 0;
     }
-    if (ufd < 0 && (strncmp(line, "TAP", 3) == 0 ||
-                     strncmp(line, "LONG", 4) == 0 ||
-                     strncmp(line, "SWIPE", 5) == 0)) {
-        snprintf(resp, resp_sz, "ERR uinput\n");
-        return 0;
-    }
+    /* 注入指令：server 模式（ufd<0）统一经 input 命令（InputManager 正规管线，等同真实手指）；
+     * 非 server（--probe/--tap/--swipe 验证模式）用 uinput 直发。 */
     if (sscanf(line, "TAP %d %d %d", &x, &y, &dur) == 3) {
-        do_tap(x, y, dur);
-        snprintf(resp, resp_sz, "OK tap\n");
+        if (ufd >= 0) {
+            do_tap(x, y, dur);
+            snprintf(resp, resp_sz, "OK tap\n");
+        } else {
+            char args[96];
+            snprintf(args, sizeof(args), "tap %d %d", x, y);
+            if (input_cmd(args) == 0) snprintf(resp, resp_sz, "OK tap\n");
+            else snprintf(resp, resp_sz, "ERR input\n");
+        }
         return 0;
     }
     if (sscanf(line, "LONG %d %d %d", &x, &y, &dur) == 3) {
-        do_tap(x, y, dur);
-        snprintf(resp, resp_sz, "OK long\n");
+        if (ufd >= 0) {
+            do_tap(x, y, dur);
+            snprintf(resp, resp_sz, "OK long\n");
+        } else {
+            char args[96];
+            snprintf(args, sizeof(args), "swipe %d %d %d %d %d", x, y, x, y, dur);
+            if (input_cmd(args) == 0) snprintf(resp, resp_sz, "OK long\n");
+            else snprintf(resp, resp_sz, "ERR input\n");
+        }
         return 0;
     }
     if (sscanf(line, "SWIPE %d %d %d %d %d", &x1, &y1, &x2, &y2, &dur) == 5) {
-        do_swipe(x1, y1, x2, y2, dur);
-        snprintf(resp, resp_sz, "OK swipe\n");
+        if (ufd >= 0) {
+            do_swipe(x1, y1, x2, y2, dur);
+            snprintf(resp, resp_sz, "OK swipe\n");
+        } else {
+            char args[112];
+            snprintf(args, sizeof(args), "swipe %d %d %d %d %d", x1, y1, x2, y2, dur);
+            if (input_cmd(args) == 0) snprintf(resp, resp_sz, "OK swipe\n");
+            else snprintf(resp, resp_sz, "ERR input\n");
+        }
         return 0;
     }
     if (strncmp(line, "PID ", 4) == 0) {
@@ -327,9 +387,8 @@ static int handle_line(const char *line, char *resp, size_t resp_sz) {
         return 0;
     }
     if (strncmp(line, "BACK", 4) == 0) {
-        FILE *kp = popen("input keyevent 4 2>/dev/null", "r");
-        if (kp) pclose(kp);
-        snprintf(resp, resp_sz, "OK back\n");
+        if (input_cmd("keyevent 4") == 0) snprintf(resp, resp_sz, "OK back\n");
+        else snprintf(resp, resp_sz, "ERR input\n");
         return 0;
     }
     if (strncmp(line, "FG", 2) == 0) {

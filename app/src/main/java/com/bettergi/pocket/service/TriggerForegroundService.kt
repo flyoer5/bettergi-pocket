@@ -112,7 +112,7 @@ class TriggerForegroundService : Service() {
                     OptionKeywords.load(applicationContext.assets),
                 ),
             ),
-            actionController = RootAutomationController(applicationContext, overlayController),
+            actionController = RootAutomationController(overlayController),
         )
         settingsRepository.addListener(settingsListener)
         Thread {
@@ -129,6 +129,7 @@ class TriggerForegroundService : Service() {
                 }
             } else {
                 // root 就绪后再做前台感知，避免与 start() 握手并发读写 socket
+                rootProbe.invalidate()
                 genshinLaunchMonitor.start()
             }
         }.start()

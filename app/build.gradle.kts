@@ -14,7 +14,8 @@ android {
         applicationId = "com.bettergi.pocket"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
+        // root 分支独立 versionCode，避免与 main 分支发布互相覆盖
+        versionCode = 2001
         versionName = "1.1-root"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

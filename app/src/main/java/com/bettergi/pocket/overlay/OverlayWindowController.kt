@@ -1,5 +1,17 @@
 package com.bettergi.pocket.overlay
 
+/**
+ * 悬浮球 + 面板 + 日志窗口 + 快速跳过位置选择器 + 高级参数面板的统一控制器。
+ *
+ * 已知架构债（后续拆分方向，避免本文件继续膨胀）：
+ * - 悬浮窗生命周期（show/hide/拖动/贴边）与 UI 绑定耦合，可拆为 OverlayWindow
+ * - 日志窗口（logSink/appendLogLine/renderLogs/日志过滤）可拆为 LogWindowPanel
+ * - 快速跳过位置选择器（spPicker*/crosshair/SeekBar）可拆为 SkipPositionPicker
+ * - 高级参数面板（sp* 相关 + AdvancedParam UI）可拆为 AdvancedParamPanel
+ * 拆分时注意：本类持有 windowManager/displayManager/settingsRepository 等共享依赖，
+ * 拆出去的组件应通过构造器注入，避免静态引用。
+ */
+
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
@@ -1063,6 +1075,9 @@ class OverlayWindowController(
         }
         val seek = object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                // 拖动中只更新本地预览（spTemp / 十字线 / 百分比），不落盘不回调，
+                // 避免拖动期间每帧触发 settingsRepository 写盘 + 全量监听回调（竞态与性能）
                 val ratio = 0.05f + progress / 90f * 0.9f
                 when (seekBar?.id) {
                     R.id.sp_picker_seek_x -> {
@@ -1077,7 +1092,10 @@ class OverlayWindowController(
                 updateCrosshairOffset()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                // 拖动结束才提交：一次写盘，避免高频回调
+                settingsRepository.setQuickSkipPosition(spTempX, spTempY)
+            }
         }
         spSeekBarX?.setOnSeekBarChangeListener(seek)
         spSeekBarY?.setOnSeekBarChangeListener(seek)

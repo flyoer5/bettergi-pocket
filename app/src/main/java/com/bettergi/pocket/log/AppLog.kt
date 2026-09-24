@@ -41,6 +41,26 @@ object AppLog {
     @Volatile
     private var logDir: File? = null
 
+    /**
+     * 时间戳秒级缓存：识别热路径（每 tick 的 DEBUG 日志、helper 输出）不再
+     * 每次都执行 DateTimeFormatter.format(LocalDateTime.now())（微秒级但高频累积），
+     * 同一秒内直接复用格式化好的标签。个别线程最多拿到 1 秒前的标签，日志可接受。
+     */
+    @Volatile
+    private var lastSecondLabel: String = ""
+    @Volatile
+    private var lastSecondEpochMs: Long = -1L
+
+    private fun currentTimeLabel(): String {
+        val second = System.currentTimeMillis() / 1000L
+        val cached = lastSecondLabel
+        if (lastSecondEpochMs == second && cached.isNotEmpty()) return cached
+        val label = timeFormat.format(LocalDateTime.now())
+        lastSecondEpochMs = second
+        lastSecondLabel = label
+        return label
+    }
+
     fun init(context: Context) {
         val dir = File(context.getExternalFilesDir(null), "logs")
         if (!dir.exists() && !dir.mkdirs()) return
@@ -72,7 +92,7 @@ object AppLog {
 
     private fun write(priority: Int, tag: String, message: String) {
         Log.println(priority, tag, message)
-        val line = "${timeFormat.format(LocalDateTime.now())} ${levelTag(priority)} [$tag] $message"
+        val line = "${currentTimeLabel()} ${levelTag(priority)} [$tag] $message"
         if (priority != Log.DEBUG) {
             for (sink in sinks) {
                 try {

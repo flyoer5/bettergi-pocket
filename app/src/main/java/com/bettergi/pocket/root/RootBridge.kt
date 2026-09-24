@@ -21,6 +21,16 @@ import java.util.concurrent.TimeUnit
  * - 不做授权引导，失败由上层如实报告状态
  * - helper 与 app 同生命周期：stop() 时发 QUIT 并销毁进程
  * - 连接可靠性：单次请求超时不误判断线；意外断开自动重连（有限次数）
+ *
+ * TAP/点击通道：
+ * - 优先走 helper socket：helper 已具备 root 权限，收到 TAP/BACK 指令后
+ *   在其侧执行 `input tap/keyevent`，不再每次点击重新 fork su 进程
+ *   （原实现每次点击 ProcessBuilder+sh+su，毫秒级开销且耗电）。
+ * - socket 离线时退化到 [inputTap]/[inputBack]（su -c input 直连）。
+ *
+ * su 探测缓存：
+ * - [resolveSu] 结果按编译期常量 [SU_CACHE_TTL_MS] 缓存，周期内直接复用，
+ *   避免每次点击都执行一次 `test -x $su` 探测（100~300ms/次）。
  */
 object RootBridge {
 
@@ -33,6 +43,9 @@ object RootBridge {
     private const val PREFS_NAME = "root_bridge"
     private const val KEY_SU_PATH = "su_path"
     private const val MAX_RECONNECT_ATTEMPTS = 5
+
+    /** su 路径缓存有效期：周期内不再执行 test -x 探测（编译期常量，非用户可调参数）。 */
+    private const val SU_CACHE_TTL_MS = 60_000L
 
     @Volatile
     private var running = false
@@ -49,6 +62,10 @@ object RootBridge {
     private var settingsRepository: TriggerSettingsRepository? = null
     @Volatile
     private var suPath: String? = null
+
+    /** 上次 su 探测成功的时间戳；周期内直接复用缓存路径。 */
+    @Volatile
+    private var suCachedAtMs: Long = 0L
 
     @Volatile
     private var connecting = false
@@ -72,10 +89,17 @@ object RootBridge {
     /** 是否正在连接 helper（用于 UI 显示「连接中…」而非误导性的「未连接」）。 */
     fun isConnecting(): Boolean = connecting
 
-    /** 启动 helper 并完成握手；成功返回 true。失败路径统一清理资源（不残留 helper）。 */
+    /**
+     * 启动 helper 并完成握手；成功返回 true。失败路径统一清理资源（不残留 helper）。
+     * 与 [stop] 竞态防护：整个启动流程以 [startLocked] 串行化，
+     * 启动循环内检查 [userStopped]，stop 后不会再连通。
+     * 新的一次 [start]（含悬浮球手动重连）重置 userStopped，允许重新连接。
+     */
     @Synchronized
     fun start(): Boolean {
         val ctx = appContext ?: return false
+        // 手动重连/重新启动：清除上次 stop 的停止标记
+        userStopped = false
         connecting = true
         try {
             return startLocked(ctx)
@@ -124,6 +148,12 @@ object RootBridge {
         val deadline = System.currentTimeMillis() + connectTimeout
         var firstFail = true
         while (System.currentTimeMillis() < deadline) {
+            // 用户主动 stop：停止等待，避免启动流程在 stop 之后继续连通
+            if (userStopped) {
+                AppLog.w(TAG, "start() aborted: user stopped while connecting")
+                cleanupResources()
+                return false
+            }
             Thread.sleep(60)
             if (!process.isAlive) {
                 AppLog.e(TAG, "helper 提前退出，code=${process.exitValue()}")
@@ -152,16 +182,29 @@ object RootBridge {
         return false
     }
 
-    /** 解析可用的 su 绝对路径（多路径探测，不依赖 app 的 PATH） */
+    /**
+     * 解析可用的 su 绝对路径（多路径探测，不依赖 app 的 PATH）。
+     * 结果缓存 [SU_CACHE_TTL_MS]：周期内直接复用，避免热路径（点击/请求）反复探测。
+     */
     private fun resolveSu(): String {
-        suPath?.let { return it }
+        suPath?.let {
+            if (suCachedAtMs > 0L && System.currentTimeMillis() - suCachedAtMs < SU_CACHE_TTL_MS) {
+                return it
+            }
+        }
+        val resolved = resolveSuUncached()
+        suPath = resolved
+        suCachedAtMs = System.currentTimeMillis()
+        return resolved
+    }
+
+    private fun resolveSuUncached(): String {
         val ctx = appContext ?: return "su"
         val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
         // 先用上次成功解析的路径（一次校验，通常 100~300ms，避免逐个候选探测）
         prefs.getString(KEY_SU_PATH, null)?.let { cached ->
             if (runCommand(ctx, "test -x $cached && echo yes", 1200L)?.trim() == "yes") {
-                suPath = cached
                 return cached
             }
         }
@@ -175,7 +218,6 @@ object RootBridge {
         )
         for (p in candidates) {
             if (runCommand(ctx, "test -x $p && echo yes", 1500L)?.trim() == "yes") {
-                suPath = p
                 prefs.edit().putString(KEY_SU_PATH, p).apply()
                 return p
             }
@@ -299,7 +341,10 @@ object RootBridge {
         return null
     }
 
-    /** input 命令模式点击（屏幕坐标，经 su 执行系统命令注入，全 root 方案兼容）。 */
+    /**
+     * input 命令模式点击（屏幕坐标，经 su 执行系统命令注入）。
+     * 仅作 socket 离线时的退化路径；在线时走 helper TAP 指令（[RootAutomationController]）。
+     */
     fun inputTap(x: Int, y: Int): Boolean {
         val ctx = appContext ?: return false
         val cmd = "${resolveSu()} -c \"input tap $x $y\""
@@ -310,7 +355,7 @@ object RootBridge {
         return true
     }
 
-    /** input 命令模式返回键。 */
+    /** input 命令模式返回键（退化路径）。 */
     fun inputBack(): Boolean {
         val ctx = appContext ?: return false
         val cmd = "${resolveSu()} -c \"input keyevent 4\""
@@ -329,7 +374,7 @@ object RootBridge {
         }
     }
 
-    /** 主动停止：不触发自动重连。 */
+    /** 主动停止：不触发自动重连。与 [start] 串行化，避免在启动流程中残留连接。 */
     @Synchronized
     fun stop() {
         if (running) AppLog.i(TAG, "root 后端停止")
