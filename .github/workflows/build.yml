@@ -2,13 +2,12 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, root ]
     tags: [ 'v*' ]
     paths-ignore:
       - 'README.md'
-      - '.github/**'
   pull_request:
-    branches: [ main ]
+    branches: [ main, root ]
   workflow_dispatch:
     inputs:
       rebuild_opencv:
