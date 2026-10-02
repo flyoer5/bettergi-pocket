@@ -14,10 +14,6 @@ interface AutomationController {
     fun execute(action: AutomationAction)
 }
 
-object NoOpAutomationController : AutomationController {
-    override fun execute(action: AutomationAction) = Unit
-}
-
 interface ActionEmitter {
     fun emit(action: AutomationAction)
 }

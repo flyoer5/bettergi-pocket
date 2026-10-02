@@ -13,7 +13,6 @@ import com.bettergi.pocket.recognition.opencv.MatOps
 import org.opencv.core.Mat
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
-import kotlin.math.round
 
 open class ImageRegion(
     srcMat: Mat,
@@ -386,10 +385,5 @@ class GameCaptureRegion(
             ownsMat = true,
             ocrService = ocrService,
         )
-    }
-
-    fun to1080PPos(nativeX: Double, nativeY: Double): Pair<Int, Int> {
-        val scale = if (width > 1920) width / 1920.0 else 1.0
-        return round(nativeX / scale).toInt() to round(nativeY / scale).toInt()
     }
 }

@@ -419,7 +419,8 @@ class OverlayWindowController(
         transforming = false
         expanded = false
         talkingUntilMs = 0L
-        hideLogWindow()
+        // 持久化日志窗口关闭状态，避免重启助手后日志又自动弹出
+        setLogWindowVisible(false)
         val view = rootView ?: return
         settingsRepository.removeListener(settingsListener)
         try {
@@ -653,10 +654,6 @@ class OverlayWindowController(
         if (texts.isNotEmpty()) {
             AppLog.d("BetterGI.AutoSkip", "选项文字：${texts.joinToString("、")}")
         }
-    }
-
-    override fun onPauseBlocked(text: String) {
-        AppLog.w("BetterGI.AutoSkip", "暂停词拦截：$text")
     }
 
     override fun onIdleScan() {
@@ -1390,6 +1387,8 @@ class OverlayWindowController(
 
     private fun snapToEdge(lp: WindowManager.LayoutParams, animate: Boolean) {
         val view = rootView ?: return
+        // 先取消进行中的动画，避免旧动画 updateListener 与下方 persist 竞争写 lp.x
+        snapAnimator?.cancel()
         val screen = screenSize()
         val width = if (view.width > 0) view.width else dp(48)
         val targetX = if (lp.x + width / 2 < screen.first / 2) 0 else screen.first - width
@@ -1399,7 +1398,6 @@ class OverlayWindowController(
             persistPosition(lp)
             return
         }
-        snapAnimator?.cancel()
         val fromX = lp.x
         snapAnimator = ValueAnimator.ofInt(fromX, targetX).apply {
             duration = 180
