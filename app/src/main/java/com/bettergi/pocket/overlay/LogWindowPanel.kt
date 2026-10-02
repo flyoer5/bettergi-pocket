@@ -395,8 +395,9 @@ class LogWindowPanel(
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    val bw = logBodyParams?.width ?: return@setOnTouchListener true
-                    val bh = logBodyParams?.height ?: return@setOnTouchListener true
+                    val bw = logBodyParams?.width
+                    val bh = logBodyParams?.height
+                    if (bw == null || bh == null) return@setOnTouchListener true
                     startW = bw
                     startH = bh
                     touchX = event.rawX
@@ -423,6 +424,7 @@ class LogWindowPanel(
                         }
                     } catch (_: Throwable) {
                     }
+                    true
                 }
                 else -> true
             }
