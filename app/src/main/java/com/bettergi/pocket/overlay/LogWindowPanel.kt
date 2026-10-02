@@ -65,6 +65,43 @@ class LogWindowPanel(
 
     val isVisible: Boolean get() = logWindowVisible
 
+    /** 点击坐标是否落在日志窗口内（穿透判定用）。 */
+    fun contains(x: Int, y: Int): Boolean {
+        val handle = logHandleView ?: return false
+        val body = logBodyView ?: return false
+        val handleLoc = IntArray(2)
+        val bodyLoc = IntArray(2)
+        handle.getLocationOnScreen(handleLoc)
+        body.getLocationOnScreen(bodyLoc)
+        val handleW = handle.width
+        val handleH = handle.height
+        val bodyW = body.width
+        val bodyH = body.height
+        if (x in handleLoc[0]..handleLoc[0] + handleW && y in handleLoc[1]..handleLoc[1] + handleH) return true
+        if (x in bodyLoc[0]..bodyLoc[0] + bodyW && y in bodyLoc[1]..bodyLoc[1] + bodyH) return true
+        return false
+    }
+
+    /** 点击穿透：临时把日志窗口置为不可触摸（无障碍注入点击时避免点到日志窗）。 */
+    fun applyPassthrough(passthrough: Boolean) {
+        listOf(logHandleParams, logBodyParams).forEach { lp ->
+            if (lp == null) return@forEach
+            val hasFlag = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
+            if (passthrough == hasFlag) return@forEach
+            lp.flags = if (passthrough) {
+                lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            } else {
+                lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            }
+            (if (lp === logHandleParams) logHandleView else logBodyView)?.let { view ->
+                try {
+                    windowManager.updateViewLayout(view, lp)
+                } catch (_: Throwable) {
+                }
+            }
+        }
+    }
+
     fun attach() {
         AppLog.addSink(logSink)
     }
@@ -358,8 +395,10 @@ class LogWindowPanel(
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    startW = logBodyParams?.width ?: return@setOnTouchListener true
-                    startH = logBodyParams?.height ?: return@setOnTouchListener true
+                    val bw = logBodyParams?.width ?: return@setOnTouchListener true
+                    val bh = logBodyParams?.height ?: return@setOnTouchListener true
+                    startW = bw
+                    startH = bh
                     touchX = event.rawX
                     touchY = event.rawY
                     true

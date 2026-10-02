@@ -24,17 +24,21 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
 import com.bettergi.pocket.R
 import com.bettergi.pocket.feature.autopick.AutoPickFeature
 import com.bettergi.pocket.feature.autoskip.AutoSkipEvents
+import com.bettergi.pocket.genshin.GenshinLaunchResult
 import com.bettergi.pocket.genshin.GenshinLauncher
+import com.bettergi.pocket.genshin.GenshinPackages
 import com.bettergi.pocket.log.AppLog
 import com.bettergi.pocket.root.RootBridge
 import com.bettergi.pocket.settings.TriggerSettings
@@ -126,7 +130,6 @@ class OverlayWindowController(
     private var launchExtras: View? = null
     private var launchChevron: ImageView? = null
     private var launchMenuExpanded = false
-
     private var rowQuickSkipPosition: View? = null
     private var spChevron: ImageView? = null
     private var spStatus: TextView? = null
@@ -141,53 +144,11 @@ class OverlayWindowController(
     private var spTextY: TextView? = null
     @Volatile private var spTempX: Float = 0.5f
     @Volatile private var spTempY: Float = 0.99f
-
     private var talkingUntilMs: Long = 0L
     private var lastTalkLogMs: Long = 0L
     private val clearTalkingRunnable = Runnable { refreshStatus() }
 
     private val idleFadeRunnable = Runnable { fadeBubble(IDLE_ALPHA) }
-
-    override fun onTalkHistoryMatched() {
-        mainHandler.post {
-            val now = System.currentTimeMillis()
-            // 节流：IN_DIALOG 每 tick 都会命中，日志 2s 一条
-            if (now - lastTalkLogMs >= TALK_LOG_INTERVAL_MS) {
-                lastTalkLogMs = now
-                AppLog.i("BetterGI.AutoSkip", "检测到对话（TalkHistory 命中）")
-            }
-            talkingUntilMs = System.currentTimeMillis() + TALKING_HOLD_MS
-            mainHandler.removeCallbacks(clearTalkingRunnable)
-            mainHandler.postDelayed(clearTalkingRunnable, TALKING_HOLD_MS)
-            refreshStatus()
-        }
-    }
-
-    override fun onChatIconsRecognized(count: Int, topX: Int, topY: Int) {
-        AppLog.i("BetterGI.AutoSkip", "识别到对话选项 $count 个，最高位置 ($topX, $topY)")
-    }
-
-    override fun onChatIconClicked(x: Int, y: Int) {
-        AppLog.i("BetterGI.AutoSkip", "点击对话选项 ($x, $y)")
-    }
-
-    override fun onAutoSkipLog(message: String) {
-        AppLog.i("BetterGI.AutoSkip", message)
-    }
-
-    override fun onBlackScreenClicked(x: Int, y: Int) {
-        AppLog.i("BetterGI.AutoSkip", "点击黑屏转场 ($x, $y)")
-    }
-
-    override fun onOptionTextsRecognized(texts: List<String>) {
-        if (texts.isNotEmpty()) {
-            AppLog.d("BetterGI.AutoSkip", "选项文字：${texts.joinToString("、")}")
-        }
-    }
-
-    override fun onIdleScan() {
-        AppLog.d("BetterGI.AutoSkip", "扫描中，未检测到对话…")
-    }
 
     private val settingsListener: (TriggerSettings) -> Unit = { settings ->
         updatingUi = true
@@ -375,8 +336,354 @@ class OverlayWindowController(
         }
     }
 
+    /**
+     * 无障碍手势会先打到可触摸的悬浮窗。只有点击落在这些窗口上时才临时穿透，
+     * 避免每次模拟点击都改 FLAG_NOT_TOUCHABLE 导致窗口闪烁。
+     */
+    fun prepareClickPassthrough(x: Int, y: Int): Boolean {
+        var needed = false
+        if (windowContains(params, rootView, x, y)) {
+            applyTouchPassthrough(params, rootView, passthrough = true)
+            needed = true
+        }
+        if (logWindowPanel.contains(x, y)) {
+            logWindowPanel.applyPassthrough(true)
+            needed = true
+        }
+        return needed
+    }
+
+    fun restoreClickPassthrough() {
+        applyTouchPassthrough(params, rootView, passthrough = false)
+        logWindowPanel.applyPassthrough(false)
+    }
+
+    private fun applyTouchPassthrough(
+        lp: WindowManager.LayoutParams?,
+        view: View?,
+        passthrough: Boolean,
+    ) {
+        if (lp == null || view == null) return
+        val hasFlag = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
+        if (passthrough == hasFlag) return
+        lp.flags = if (passthrough) {
+            lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        }
+        try {
+            windowManager.updateViewLayout(view, lp)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun windowContains(
+        lp: WindowManager.LayoutParams?,
+        view: View?,
+        x: Int,
+        y: Int,
+    ): Boolean {
+        if (lp == null || view == null) return false
+        val width = if (view.width > 0) view.width else return false
+        val height = if (view.height > 0) view.height else return false
+        val slop = dp(8)
+        return x >= lp.x - slop &&
+            x < lp.x + width + slop &&
+            y >= lp.y - slop &&
+            y < lp.y + height + slop
+    }
+
+    fun hide() {
+        stopScreenWatch()
+        logWindowPanel.detach()
+        mainHandler.removeCallbacks(idleFadeRunnable)
+        mainHandler.removeCallbacks(clearTalkingRunnable)
+        snapAnimator?.cancel()
+        snapAnimator = null
+        transforming = false
+        expanded = false
+        talkingUntilMs = 0L
+        // 持久化日志窗口关闭状态，避免重启助手后日志又自动弹出
+        logWindowPanel.setVisible(false)
+        val view = rootView ?: return
+        settingsRepository.removeListener(settingsListener)
+        try {
+            windowManager.removeView(view)
+        } catch (_: Throwable) {
+        }
+        rootView = null
+        bubbleView = null
+        panelView = null
+        panelScroll = null
+        statusDot = null
+        statusText = null
+        chatBadge = null
+        params = null
+        switchEnabled = null
+        switchAutoSkip = null
+        switchQuickSkip = null
+        hideSkipPositionPicker()
+        rowQuickSkipPosition = null
+        spChevron = null
+        spStatus = null
+        spReset = null
+        switchSmartOption = null
+        switchBlackScreen = null
+        switchTapIndicator = null
+        rowTapIndicator = null
+        switchExclamation = null
+        rowExclamation = null
+        releaseTapIndicator()
+        switchAutoPick = null
+        switchAutoLaunch = null
+        switchSnapEdge = null
+        launchHint = null
+        launchSubtitle = null
+        logToggleButton = null
+        rowAutoSkip = null
+        rowQuickSkip = null
+        rowSmartOption = null
+        rowBlackScreen = null
+        rowAutoPick = null
+        rowLaunch = null
+        autoSkipExtras = null
+        autoSkipChevron = null
+        launchExtras = null
+        launchChevron = null
+    }
+
+    private fun launchGenshinFromButton() {
+        when (genshinLauncher.launch()) {
+            is GenshinLaunchResult.Started -> setExpanded(false)
+            GenshinLaunchResult.NotInstalled -> {
+                Toast.makeText(themedContext, "未安装原神", Toast.LENGTH_SHORT).show()
+                refreshLaunchHint()
+            }
+            is GenshinLaunchResult.Failed -> {
+                Toast.makeText(themedContext, "无法启动原神", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun refreshLaunchHint() {
+        val pkg = genshinLauncher.resolveInstalledPackage()
+        if (pkg != null) {
+            val name = GenshinPackages.displayName(pkg)
+            launchSubtitle?.text = "打开已安装的$name"
+            launchHint?.text = "启动助手时若未检测到${name}则打开一次"
+        } else {
+            launchSubtitle?.text = "未安装原神"
+            launchHint?.text = "未安装原神"
+        }
+    }
+
+    private fun exitAssistant() {
+        if (transforming) return
+        settingsRepository.setScreenShareEnabled(false)
+        val panel = panelView
+        if (panel != null && expanded) {
+            transforming = true
+            panel.animate().cancel()
+            panel.animate()
+                .alpha(0f)
+                .scaleX(0.9f)
+                .scaleY(0.9f)
+                .setDuration(160)
+                .setInterpolator(PathInterpolator(0.22f, 1f, 0.36f, 1f))
+                .withEndAction { onExit() }
+                .start()
+        } else {
+            onExit()
+        }
+    }
+
+    private fun setExpanded(value: Boolean) {
+        if (expanded == value || transforming) return
+        val bubble = bubbleView ?: return
+        val panel = panelView ?: return
+        val root = rootView ?: return
+        expanded = value
+        transforming = true
+        bubble.animate().cancel()
+        panel.animate().cancel()
+        val ease = PathInterpolator(0.22f, 1f, 0.36f, 1f)
+
+        if (value) {
+            refreshLaunchHint()
+            mainHandler.removeCallbacks(idleFadeRunnable)
+            panel.alpha = 0f
+            panel.scaleX = 0.84f
+            panel.scaleY = 0.84f
+            panel.visibility = View.VISIBLE
+            root.post {
+                params?.let { ensurePanelOnScreen(it) }
+                applyPanelPivot(panel)
+                clampPanelHeight()
+                bubble.animate()
+                    .alpha(0f)
+                    .scaleX(0.72f)
+                    .scaleY(0.72f)
+                    .setDuration(160)
+                    .setInterpolator(ease)
+                    .withEndAction {
+                        bubble.visibility = View.GONE
+                        bubble.scaleX = 1f
+                        bubble.scaleY = 1f
+                    }
+                    .start()
+                panel.animate()
+                    .alpha(1f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(280)
+                    .setInterpolator(ease)
+                    .withEndAction {
+                        transforming = false
+                    }
+                    .start()
+            }
+        } else {
+            applyPanelPivot(panel)
+            bubble.alpha = 0f
+            bubble.scaleX = 0.72f
+            bubble.scaleY = 0.72f
+            bubble.visibility = View.VISIBLE
+            panel.animate()
+                .alpha(0f)
+                .scaleX(0.88f)
+                .scaleY(0.88f)
+                .setDuration(200)
+                .setInterpolator(ease)
+                .withEndAction {
+                    panel.visibility = View.GONE
+                    panel.alpha = 1f
+                    panel.scaleX = 1f
+                    panel.scaleY = 1f
+                }
+                .start()
+            bubble.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(240)
+                .setInterpolator(ease)
+                .withEndAction {
+                    transforming = false
+                    params?.let { snapToEdgeIfEnabled(it, animate = true) }
+                    scheduleIdleFade()
+                }
+                .start()
+        }
+    }
+
+    private fun applyPanelPivot(panel: View) {
+        val lp = params ?: return
+        val screen = screenSize()
+        val onRight = lp.x + (rootView?.width ?: 0) / 2f > screen.first / 2f
+        panel.pivotX = if (onRight) panel.width.toFloat() else 0f
+        panel.pivotY = 0f
+    }
+
+    private fun applyFeatureEnabled(settings: TriggerSettings) {
+        val shareOn = settings.screenShareEnabled
+        val autoSkipOn = shareOn && settings.autoSkipEnabled
+        switchAutoSkip?.isEnabled = shareOn
+        switchAutoPick?.isEnabled = shareOn
+        switchQuickSkip?.isEnabled = autoSkipOn
+        switchSmartOption?.isEnabled = autoSkipOn
+        switchBlackScreen?.isEnabled = autoSkipOn
+        switchTapIndicator?.isEnabled = shareOn
+        switchExclamation?.isEnabled = autoSkipOn
+        rowAutoSkip?.alpha = if (shareOn) 1f else 0.45f
+        rowAutoPick?.alpha = if (shareOn) 1f else 0.45f
+        rowQuickSkip?.alpha = if (autoSkipOn) 1f else 0.45f
+        rowSmartOption?.alpha = if (autoSkipOn) 1f else 0.45f
+        rowBlackScreen?.alpha = if (autoSkipOn) 1f else 0.45f
+        rowTapIndicator?.alpha = if (shareOn) 1f else 0.45f
+        rowExclamation?.alpha = if (autoSkipOn) 1f else 0.45f
+    }
+
+    override fun onTalkHistoryMatched() {
+        mainHandler.post {
+            val now = System.currentTimeMillis()
+            // 节流：IN_DIALOG 每 tick 都会命中，日志 2s 一条
+            if (now - lastTalkLogMs >= TALK_LOG_INTERVAL_MS) {
+                lastTalkLogMs = now
+                AppLog.i("BetterGI.AutoSkip", "检测到对话（TalkHistory 命中）")
+            }
+            talkingUntilMs = System.currentTimeMillis() + TALKING_HOLD_MS
+            mainHandler.removeCallbacks(clearTalkingRunnable)
+            mainHandler.postDelayed(clearTalkingRunnable, TALKING_HOLD_MS)
+            refreshStatus()
+        }
+    }
+
+    override fun onChatIconsRecognized(count: Int, topX: Int, topY: Int) {
+        AppLog.i("BetterGI.AutoSkip", "识别到对话选项 $count 个，最高位置 ($topX, $topY)")
+    }
+
+    override fun onChatIconClicked(x: Int, y: Int) {
+        AppLog.i("BetterGI.AutoSkip", "点击对话选项 ($x, $y)")
+    }
+
+    override fun onAutoSkipLog(message: String) {
+        AppLog.i("BetterGI.AutoSkip", message)
+    }
+
+    override fun onBlackScreenClicked(x: Int, y: Int) {
+        AppLog.i("BetterGI.AutoSkip", "点击黑屏转场 ($x, $y)")
+    }
+
+    override fun onOptionTextsRecognized(texts: List<String>) {
+        if (texts.isNotEmpty()) {
+            AppLog.d("BetterGI.AutoSkip", "选项文字：${texts.joinToString("、")}")
+        }
+    }
+
+    override fun onIdleScan() {
+        AppLog.d("BetterGI.AutoSkip", "扫描中，未检测到对话…")
+    }
 
 
+    fun flashTap(x: Int, y: Int) {
+        if (!settingsRepository.get().showTapIndicator) return
+        if (!Settings.canDrawOverlays(context)) return
+        mainHandler.post {
+            val size = tapIndicatorSizePx
+            if (tapIndicatorView == null) {
+                val dot = View(themedContext)
+                dot.background = ContextCompat.getDrawable(themedContext, R.drawable.tap_indicator)
+                val params = WindowManager.LayoutParams(
+                    size,
+                    size,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT,
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                }
+                try {
+                    windowManager.addView(dot, params)
+                } catch (_: Throwable) {
+                    return@post
+                }
+                tapIndicatorView = dot
+                tapIndicatorParams = params
+            }
+            val params = tapIndicatorParams ?: return@post
+            params.x = x - size / 2
+            params.y = y - size / 2
+            tapIndicatorView?.visibility = View.VISIBLE
+            try {
+                windowManager.updateViewLayout(tapIndicatorView, params)
+            } catch (_: Throwable) {
+            }
+            mainHandler.removeCallbacks(hideTapIndicator)
+            mainHandler.postDelayed(hideTapIndicator, TAP_INDICATOR_MS)
+        }
+    }
 
     private fun releaseTapIndicator() {
         mainHandler.removeCallbacks(hideTapIndicator)
@@ -402,8 +709,6 @@ class OverlayWindowController(
             }
         }
     }
-
-
 
     private fun setAutoSkipMenuExpanded(expanded: Boolean, persist: Boolean = true) {
         autoSkipMenuExpanded = expanded
@@ -477,9 +782,6 @@ class OverlayWindowController(
         }
     }
 
-
-
-    // ===== 跳过位置取点 =====
 
     private fun showSkipPositionPicker() {
         if (spPickerView != null) return
@@ -662,11 +964,6 @@ class OverlayWindowController(
             this.y = y
         }
     }
-
-
-
-
-
 
     private fun setupDrag(
         dragHandle: View,
@@ -896,16 +1193,6 @@ class OverlayWindowController(
         return metrics.widthPixels to metrics.heightPixels
     }
 
-
-    private fun statusBarHeight(): Int {
-        val id = context.resources.getIdentifier("status_bar_height", "dimen", "android")
-        if (id > 0) {
-            return context.resources.getDimensionPixelSize(id)
-        }
-        return dp(28)
-    }
-
-    /** 取点窗默认初始位置（左下角）。 */
     private fun defaultLogPosition(): Pair<Int, Int> {
         val screen = screenSize()
         val height = dp(LOG_DEFAULT_HEIGHT_DP)
@@ -913,6 +1200,14 @@ class OverlayWindowController(
         val x = margin
         val y = (screen.second - height - dp(48)).coerceAtLeast(statusBarHeight())
         return x to y
+    }
+
+    private fun statusBarHeight(): Int {
+        val id = context.resources.getIdentifier("status_bar_height", "dimen", "android")
+        if (id > 0) {
+            return context.resources.getDimensionPixelSize(id)
+        }
+        return dp(28)
     }
 
     private val tapIndicatorSizePx: Int by lazy { dp(TAP_INDICATOR_SIZE_DP) }
