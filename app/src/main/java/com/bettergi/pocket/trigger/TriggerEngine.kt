@@ -93,8 +93,13 @@ class TriggerEngine(
                     }
                 }
                 emitter.flushTo(actionController)
-            } catch (e: Exception) {
-                Log.e(TAG, "recognize frame failed", e)
+            } catch (e: Throwable) {
+                // 捕获全部异常/错误(含 OpenCV native 错误、OOM 边缘), 避免引擎线程崩溃后服务还在跑但无识别
+                if (e is OutOfMemoryError) {
+                    Log.e(TAG, "recognize frame OOM, skip this tick", e)
+                } else {
+                    Log.e(TAG, "recognize frame failed", e)
+                }
             }
 
             val now = System.currentTimeMillis()

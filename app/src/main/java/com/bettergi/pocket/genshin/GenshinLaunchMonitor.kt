@@ -11,23 +11,34 @@ class GenshinLaunchMonitor(
     private var started = false
     private var attempted = false
 
+    @Synchronized
     fun start() {
         if (started) return
         started = true
-        if (!GenshinPackages.shouldAttemptAutoLaunch(
-                enabled = settingsRepository.get().autoLaunchGenshinEnabled,
-                genshinInForeground = isGenshinInForeground(),
-                alreadyAttempted = attempted,
-                allowed = canAutoLaunch(),
-            )
-        ) {
-            return
-        }
+        if (!canAttempt()) return
+        attemptLaunch()
+    }
+
+    @Synchronized
+    private fun canAttempt(): Boolean = GenshinPackages.shouldAttemptAutoLaunch(
+        enabled = settingsRepository.get().autoLaunchGenshinEnabled,
+        genshinInForeground = isGenshinInForeground(),
+        alreadyAttempted = attempted,
+        allowed = canAutoLaunch(),
+    )
+
+    @Synchronized
+    private fun attemptLaunch() {
         attempted = true
-        launcher.launch()
+        val result = launcher.launch()
+        // 启动失败（未安装/异常）时重置 attempted，允许后续重试（如用户修复环境后）
+        if (result !is GenshinLaunchResult.Started) {
+            attempted = false
+        }
     }
 
     fun stop() {
         started = false
+        attempted = false
     }
 }
