@@ -5,7 +5,6 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.ComponentCallbacks
 import android.content.Context
-import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -25,29 +24,21 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
-import android.view.animation.PathInterpolator
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
-import androidx.core.widget.ImageViewCompat
 import com.bettergi.pocket.R
 import com.bettergi.pocket.feature.autopick.AutoPickFeature
 import com.bettergi.pocket.feature.autoskip.AutoSkipEvents
-import com.bettergi.pocket.genshin.GenshinLaunchResult
 import com.bettergi.pocket.genshin.GenshinLauncher
-import com.bettergi.pocket.genshin.GenshinPackages
 import com.bettergi.pocket.log.AppLog
 import com.bettergi.pocket.root.RootBridge
 import com.bettergi.pocket.settings.TriggerSettings
 import com.bettergi.pocket.settings.TriggerSettingsRepository
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 class OverlayWindowController(
     private val context: Context,
@@ -113,6 +104,16 @@ class OverlayWindowController(
     private var launchHint: TextView? = null
     private var launchSubtitle: TextView? = null
     private var logToggleButton: ImageButton? = null
+    private val logWindowPanel: LogWindowPanel by lazy {
+        LogWindowPanel(
+            context = themedContext,
+            windowManager = windowManager,
+            prefs = prefs,
+            settingsRepository = settingsRepository,
+            screenSize = { screenSize() },
+            dp = { dp(it) },
+        )
+    }
     private var rowAutoSkip: View? = null
     private var rowQuickSkip: View? = null
     private var rowSmartOption: View? = null
@@ -125,17 +126,7 @@ class OverlayWindowController(
     private var launchExtras: View? = null
     private var launchChevron: ImageView? = null
     private var launchMenuExpanded = false
-    private var logHandleView: View? = null
-    private var logBodyView: View? = null
-    private var logTitle: TextView? = null
-    private var logText: TextView? = null
-    private var logScroll: ScrollView? = null
-    private var logFilterTag: String? = null
-    private var logFilterAll: TextView? = null
-    private var logFilterAutoSkip: TextView? = null
-    private var logFilterRoot: TextView? = null
-    private var logFilterOther: TextView? = null
-    private var logResizeView: View? = null
+
     private var rowQuickSkipPosition: View? = null
     private var spChevron: ImageView? = null
     private var spStatus: TextView? = null
@@ -150,21 +141,53 @@ class OverlayWindowController(
     private var spTextY: TextView? = null
     @Volatile private var spTempX: Float = 0.5f
     @Volatile private var spTempY: Float = 0.99f
-    private var logHandleParams: WindowManager.LayoutParams? = null
-    private var logBodyParams: WindowManager.LayoutParams? = null
-    private val logLines = ArrayDeque<String>(MAX_LOG_LINES)
-    private val logSink = object : AppLog.Sink {
-        override fun onLog(line: String) {
-            appendLogLine(line)
-        }
-    }
-    private var logWindowVisible = false
+
     private var talkingUntilMs: Long = 0L
     private var lastTalkLogMs: Long = 0L
-    private val logTimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.CHINA)
     private val clearTalkingRunnable = Runnable { refreshStatus() }
 
     private val idleFadeRunnable = Runnable { fadeBubble(IDLE_ALPHA) }
+
+    override fun onTalkHistoryMatched() {
+        mainHandler.post {
+            val now = System.currentTimeMillis()
+            // 节流：IN_DIALOG 每 tick 都会命中，日志 2s 一条
+            if (now - lastTalkLogMs >= TALK_LOG_INTERVAL_MS) {
+                lastTalkLogMs = now
+                AppLog.i("BetterGI.AutoSkip", "检测到对话（TalkHistory 命中）")
+            }
+            talkingUntilMs = System.currentTimeMillis() + TALKING_HOLD_MS
+            mainHandler.removeCallbacks(clearTalkingRunnable)
+            mainHandler.postDelayed(clearTalkingRunnable, TALKING_HOLD_MS)
+            refreshStatus()
+        }
+    }
+
+    override fun onChatIconsRecognized(count: Int, topX: Int, topY: Int) {
+        AppLog.i("BetterGI.AutoSkip", "识别到对话选项 $count 个，最高位置 ($topX, $topY)")
+    }
+
+    override fun onChatIconClicked(x: Int, y: Int) {
+        AppLog.i("BetterGI.AutoSkip", "点击对话选项 ($x, $y)")
+    }
+
+    override fun onAutoSkipLog(message: String) {
+        AppLog.i("BetterGI.AutoSkip", message)
+    }
+
+    override fun onBlackScreenClicked(x: Int, y: Int) {
+        AppLog.i("BetterGI.AutoSkip", "点击黑屏转场 ($x, $y)")
+    }
+
+    override fun onOptionTextsRecognized(texts: List<String>) {
+        if (texts.isNotEmpty()) {
+            AppLog.d("BetterGI.AutoSkip", "选项文字：${texts.joinToString("、")}")
+        }
+    }
+
+    override fun onIdleScan() {
+        AppLog.d("BetterGI.AutoSkip", "扫描中，未检测到对话…")
+    }
 
     private val settingsListener: (TriggerSettings) -> Unit = { settings ->
         updatingUi = true
@@ -283,7 +306,7 @@ class OverlayWindowController(
         }
         setupDrag(header, layoutParams)
         collapse.setOnClickListener { setExpanded(false) }
-        logToggle.setOnClickListener { setLogWindowVisible(!logWindowVisible) }
+        logToggle.setOnClickListener { logWindowPanel.toggle() }
         rowAutoSkip?.setOnClickListener { setAutoSkipMenuExpanded(!autoSkipMenuExpanded) }
         rowLaunch?.setOnClickListener { setLaunchMenuExpanded(!launchMenuExpanded) }
         root.findViewById<View>(R.id.overlay_launch).setOnClickListener { launchGenshinFromButton() }
@@ -336,12 +359,12 @@ class OverlayWindowController(
         rootView = root
         params = layoutParams
         windowManager.addView(root, layoutParams)
-        setLogWindowVisible(prefs.getBoolean(KEY_LOG_VISIBLE, false), persist = false)
+        logWindowPanel.setVisible(prefs.getBoolean(LogWindowPanel.KEY_LOG_VISIBLE, false), persist = false)
         setAutoSkipMenuExpanded(prefs.getBoolean(KEY_AUTO_SKIP_EXPANDED, false), persist = false)
         setLaunchMenuExpanded(prefs.getBoolean(KEY_LAUNCH_EXPANDED, false), persist = false)
         settingsRepository.addListener(settingsListener)
         startScreenWatch()
-        AppLog.addSink(logSink)
+        logWindowPanel.attach()
         mainHandler.post { refreshStatus() }
         root.post {
             rememberScreen()
@@ -352,416 +375,8 @@ class OverlayWindowController(
         }
     }
 
-    /**
-     * 无障碍手势会先打到可触摸的悬浮窗。只有点击落在这些窗口上时才临时穿透，
-     * 避免每次模拟点击都改 FLAG_NOT_TOUCHABLE 导致窗口闪烁。
-     */
-    fun prepareClickPassthrough(x: Int, y: Int): Boolean {
-        var needed = false
-        if (windowContains(params, rootView, x, y)) {
-            applyTouchPassthrough(params, rootView, passthrough = true)
-            needed = true
-        }
-        if (windowContains(logHandleParams, logHandleView, x, y)) {
-            applyTouchPassthrough(logHandleParams, logHandleView, passthrough = true)
-            needed = true
-        }
-        return needed
-    }
-
-    fun restoreClickPassthrough() {
-        applyTouchPassthrough(params, rootView, passthrough = false)
-        applyTouchPassthrough(logHandleParams, logHandleView, passthrough = false)
-    }
-
-    private fun applyTouchPassthrough(
-        lp: WindowManager.LayoutParams?,
-        view: View?,
-        passthrough: Boolean,
-    ) {
-        if (lp == null || view == null) return
-        val hasFlag = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
-        if (passthrough == hasFlag) return
-        lp.flags = if (passthrough) {
-            lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        } else {
-            lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        }
-        try {
-            windowManager.updateViewLayout(view, lp)
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun windowContains(
-        lp: WindowManager.LayoutParams?,
-        view: View?,
-        x: Int,
-        y: Int,
-    ): Boolean {
-        if (lp == null || view == null) return false
-        val width = if (view.width > 0) view.width else return false
-        val height = if (view.height > 0) view.height else return false
-        val slop = dp(8)
-        return x >= lp.x - slop &&
-            x < lp.x + width + slop &&
-            y >= lp.y - slop &&
-            y < lp.y + height + slop
-    }
-
-    fun hide() {
-        stopScreenWatch()
-        AppLog.removeSink(logSink)
-        mainHandler.removeCallbacks(idleFadeRunnable)
-        mainHandler.removeCallbacks(clearTalkingRunnable)
-        snapAnimator?.cancel()
-        snapAnimator = null
-        transforming = false
-        expanded = false
-        talkingUntilMs = 0L
-        // 持久化日志窗口关闭状态，避免重启助手后日志又自动弹出
-        setLogWindowVisible(false)
-        val view = rootView ?: return
-        settingsRepository.removeListener(settingsListener)
-        try {
-            windowManager.removeView(view)
-        } catch (_: Throwable) {
-        }
-        rootView = null
-        bubbleView = null
-        panelView = null
-        panelScroll = null
-        statusDot = null
-        statusText = null
-        chatBadge = null
-        params = null
-        switchEnabled = null
-        switchAutoSkip = null
-        switchQuickSkip = null
-        hideSkipPositionPicker()
-        rowQuickSkipPosition = null
-        spChevron = null
-        spStatus = null
-        spReset = null
-        switchSmartOption = null
-        switchBlackScreen = null
-        switchTapIndicator = null
-        rowTapIndicator = null
-        switchExclamation = null
-        rowExclamation = null
-        releaseTapIndicator()
-        switchAutoPick = null
-        switchAutoLaunch = null
-        switchSnapEdge = null
-        launchHint = null
-        launchSubtitle = null
-        logToggleButton = null
-        rowAutoSkip = null
-        rowQuickSkip = null
-        rowSmartOption = null
-        rowBlackScreen = null
-        rowAutoPick = null
-        rowLaunch = null
-        autoSkipExtras = null
-        autoSkipChevron = null
-        launchExtras = null
-        launchChevron = null
-    }
-
-    private fun launchGenshinFromButton() {
-        when (genshinLauncher.launch()) {
-            is GenshinLaunchResult.Started -> setExpanded(false)
-            GenshinLaunchResult.NotInstalled -> {
-                Toast.makeText(themedContext, "未安装原神", Toast.LENGTH_SHORT).show()
-                refreshLaunchHint()
-            }
-            is GenshinLaunchResult.Failed -> {
-                Toast.makeText(themedContext, "无法启动原神", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun refreshLaunchHint() {
-        val pkg = genshinLauncher.resolveInstalledPackage()
-        if (pkg != null) {
-            val name = GenshinPackages.displayName(pkg)
-            launchSubtitle?.text = "打开已安装的$name"
-            launchHint?.text = "启动助手时若未检测到${name}则打开一次"
-        } else {
-            launchSubtitle?.text = "未安装原神"
-            launchHint?.text = "未安装原神"
-        }
-    }
-
-    private fun exitAssistant() {
-        if (transforming) return
-        settingsRepository.setScreenShareEnabled(false)
-        val panel = panelView
-        if (panel != null && expanded) {
-            transforming = true
-            panel.animate().cancel()
-            panel.animate()
-                .alpha(0f)
-                .scaleX(0.9f)
-                .scaleY(0.9f)
-                .setDuration(160)
-                .setInterpolator(PathInterpolator(0.22f, 1f, 0.36f, 1f))
-                .withEndAction { onExit() }
-                .start()
-        } else {
-            onExit()
-        }
-    }
-
-    private fun setExpanded(value: Boolean) {
-        if (expanded == value || transforming) return
-        val bubble = bubbleView ?: return
-        val panel = panelView ?: return
-        val root = rootView ?: return
-        expanded = value
-        transforming = true
-        bubble.animate().cancel()
-        panel.animate().cancel()
-        val ease = PathInterpolator(0.22f, 1f, 0.36f, 1f)
-
-        if (value) {
-            refreshLaunchHint()
-            mainHandler.removeCallbacks(idleFadeRunnable)
-            panel.alpha = 0f
-            panel.scaleX = 0.84f
-            panel.scaleY = 0.84f
-            panel.visibility = View.VISIBLE
-            root.post {
-                params?.let { ensurePanelOnScreen(it) }
-                applyPanelPivot(panel)
-                clampPanelHeight()
-                bubble.animate()
-                    .alpha(0f)
-                    .scaleX(0.72f)
-                    .scaleY(0.72f)
-                    .setDuration(160)
-                    .setInterpolator(ease)
-                    .withEndAction {
-                        bubble.visibility = View.GONE
-                        bubble.scaleX = 1f
-                        bubble.scaleY = 1f
-                    }
-                    .start()
-                panel.animate()
-                    .alpha(1f)
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(280)
-                    .setInterpolator(ease)
-                    .withEndAction {
-                        transforming = false
-                    }
-                    .start()
-            }
-        } else {
-            applyPanelPivot(panel)
-            bubble.alpha = 0f
-            bubble.scaleX = 0.72f
-            bubble.scaleY = 0.72f
-            bubble.visibility = View.VISIBLE
-            panel.animate()
-                .alpha(0f)
-                .scaleX(0.88f)
-                .scaleY(0.88f)
-                .setDuration(200)
-                .setInterpolator(ease)
-                .withEndAction {
-                    panel.visibility = View.GONE
-                    panel.alpha = 1f
-                    panel.scaleX = 1f
-                    panel.scaleY = 1f
-                }
-                .start()
-            bubble.animate()
-                .alpha(1f)
-                .scaleX(1f)
-                .scaleY(1f)
-                .setDuration(240)
-                .setInterpolator(ease)
-                .withEndAction {
-                    transforming = false
-                    params?.let { snapToEdgeIfEnabled(it, animate = true) }
-                    scheduleIdleFade()
-                }
-                .start()
-        }
-    }
-
-    private fun applyPanelPivot(panel: View) {
-        val lp = params ?: return
-        val screen = screenSize()
-        val onRight = lp.x + (rootView?.width ?: 0) / 2f > screen.first / 2f
-        panel.pivotX = if (onRight) panel.width.toFloat() else 0f
-        panel.pivotY = 0f
-    }
-
-    private fun applyFeatureEnabled(settings: TriggerSettings) {
-        val shareOn = settings.screenShareEnabled
-        val autoSkipOn = shareOn && settings.autoSkipEnabled
-        switchAutoSkip?.isEnabled = shareOn
-        switchAutoPick?.isEnabled = shareOn
-        switchQuickSkip?.isEnabled = autoSkipOn
-        switchSmartOption?.isEnabled = autoSkipOn
-        switchBlackScreen?.isEnabled = autoSkipOn
-        switchTapIndicator?.isEnabled = shareOn
-        switchExclamation?.isEnabled = autoSkipOn
-        rowAutoSkip?.alpha = if (shareOn) 1f else 0.45f
-        rowAutoPick?.alpha = if (shareOn) 1f else 0.45f
-        rowQuickSkip?.alpha = if (autoSkipOn) 1f else 0.45f
-        rowSmartOption?.alpha = if (autoSkipOn) 1f else 0.45f
-        rowBlackScreen?.alpha = if (autoSkipOn) 1f else 0.45f
-        rowTapIndicator?.alpha = if (shareOn) 1f else 0.45f
-        rowExclamation?.alpha = if (autoSkipOn) 1f else 0.45f
-    }
-
-    override fun onTalkHistoryMatched() {
-        mainHandler.post {
-            val now = System.currentTimeMillis()
-            // 节流：IN_DIALOG 每 tick 都会命中，日志 2s 一条
-            if (now - lastTalkLogMs >= TALK_LOG_INTERVAL_MS) {
-                lastTalkLogMs = now
-                AppLog.i("BetterGI.AutoSkip", "检测到对话（TalkHistory 命中）")
-            }
-            talkingUntilMs = System.currentTimeMillis() + TALKING_HOLD_MS
-            mainHandler.removeCallbacks(clearTalkingRunnable)
-            mainHandler.postDelayed(clearTalkingRunnable, TALKING_HOLD_MS)
-            refreshStatus()
-        }
-    }
-
-    override fun onChatIconsRecognized(count: Int, topX: Int, topY: Int) {
-        AppLog.i("BetterGI.AutoSkip", "识别到对话选项 $count 个，最高位置 ($topX, $topY)")
-    }
-
-    override fun onChatIconClicked(x: Int, y: Int) {
-        AppLog.i("BetterGI.AutoSkip", "点击对话选项 ($x, $y)")
-    }
-
-    override fun onAutoSkipLog(message: String) {
-        AppLog.i("BetterGI.AutoSkip", message)
-    }
-
-    override fun onBlackScreenClicked(x: Int, y: Int) {
-        AppLog.i("BetterGI.AutoSkip", "点击黑屏转场 ($x, $y)")
-    }
-
-    override fun onOptionTextsRecognized(texts: List<String>) {
-        if (texts.isNotEmpty()) {
-            AppLog.d("BetterGI.AutoSkip", "选项文字：${texts.joinToString("、")}")
-        }
-    }
-
-    override fun onIdleScan() {
-        AppLog.d("BetterGI.AutoSkip", "扫描中，未检测到对话…")
-    }
 
 
-    private fun appendLog(message: String) {
-        appendLogLine("${logTimeFormat.format(LocalTime.now())} $message")
-    }
-
-    /** 追加一行已格式化的日志（供 AppLog sink 使用，不再补时间戳） */
-    private fun appendLogLine(line: String) {
-        mainHandler.post {
-            if (logLines.size >= MAX_LOG_LINES) {
-                logLines.removeFirst()
-            }
-            logLines.addLast(line)
-            if (!logWindowVisible || logText == null) return@post
-            renderLogs()
-            val scroll = logScroll ?: return@post
-            val child = scroll.getChildAt(0) ?: return@post
-            val atBottom = scroll.scrollY >= child.height - scroll.height - 4
-            if (atBottom) {
-                scroll.post { scroll.smoothScrollTo(0, scroll.getChildAt(0)?.height ?: 0) }
-            }
-        }
-    }
-
-    /** 按当前过滤标签渲染日志面板内容。 */
-    private fun renderLogs() {
-        if (logLines.isEmpty()) return
-        val filter = logFilterTag
-        val text = if (filter == null) {
-            logLines.joinToString("\n")
-        } else {
-            logLines.filter { logTagOf(it) == filter }.joinToString("\n")
-        }
-        logText?.text = text.ifEmpty { "（无此功能日志）" }
-    }
-
-    /** 解析日志行的功能标签：对话 / root / 其他。 */
-    private fun logTagOf(line: String): String? {
-        return when {
-            line.contains("[BetterGI.AutoSkip]") -> "autoskip"
-            line.contains("[BetterGI.Root]") || line.contains("[helper]") || line.contains("root backend") -> "root"
-            else -> "other"
-        }
-    }
-
-    private fun setLogFilter(tag: String?) {
-        logFilterTag = tag
-        refreshLogFilterChips()
-        renderLogs()
-    }
-
-    private fun refreshLogFilterChips() {
-        val active = ContextCompat.getColor(themedContext, R.color.overlay_log_green)
-        val muted = ContextCompat.getColor(themedContext, R.color.overlay_text_muted)
-        fun tint(view: TextView?, isActive: Boolean) {
-            view?.setTextColor(if (isActive) active else muted)
-        }
-        tint(logFilterAll, logFilterTag == null)
-        tint(logFilterAutoSkip, logFilterTag == "autoskip")
-        tint(logFilterRoot, logFilterTag == "root")
-        tint(logFilterOther, logFilterTag == "other")
-    }
-
-    /** 在点击位置闪现一个圆点（设置开启时），用于可视化自动点击位置。 */
-    fun flashTap(x: Int, y: Int) {
-        if (!settingsRepository.get().showTapIndicator) return
-        if (!Settings.canDrawOverlays(context)) return
-        mainHandler.post {
-            val size = tapIndicatorSizePx
-            if (tapIndicatorView == null) {
-                val dot = View(themedContext)
-                dot.background = ContextCompat.getDrawable(themedContext, R.drawable.tap_indicator)
-                val params = WindowManager.LayoutParams(
-                    size,
-                    size,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    PixelFormat.TRANSLUCENT,
-                ).apply {
-                    gravity = Gravity.TOP or Gravity.START
-                }
-                try {
-                    windowManager.addView(dot, params)
-                } catch (_: Throwable) {
-                    return@post
-                }
-                tapIndicatorView = dot
-                tapIndicatorParams = params
-            }
-            val params = tapIndicatorParams ?: return@post
-            params.x = x - size / 2
-            params.y = y - size / 2
-            tapIndicatorView?.visibility = View.VISIBLE
-            try {
-                windowManager.updateViewLayout(tapIndicatorView, params)
-            } catch (_: Throwable) {
-            }
-            mainHandler.removeCallbacks(hideTapIndicator)
-            mainHandler.postDelayed(hideTapIndicator, TAP_INDICATOR_MS)
-        }
-    }
 
     private fun releaseTapIndicator() {
         mainHandler.removeCallbacks(hideTapIndicator)
@@ -788,28 +403,7 @@ class OverlayWindowController(
         }
     }
 
-    private fun setLogWindowVisible(visible: Boolean, persist: Boolean = true) {
-        if (persist) {
-            prefs.edit().putBoolean(KEY_LOG_VISIBLE, visible).apply()
-        }
-        logWindowVisible = visible
-        if (visible) {
-            showLogWindow()
-        } else {
-            hideLogWindow()
-        }
-        refreshLogToggle()
-    }
 
-    private fun refreshLogToggle() {
-        val button = logToggleButton ?: return
-        button.isSelected = logWindowVisible
-        val color = ContextCompat.getColor(
-            themedContext,
-            if (logWindowVisible) R.color.overlay_log_green else R.color.overlay_text_muted,
-        )
-        ImageViewCompat.setImageTintList(button, ColorStateList.valueOf(color))
-    }
 
     private fun setAutoSkipMenuExpanded(expanded: Boolean, persist: Boolean = true) {
         autoSkipMenuExpanded = expanded
@@ -867,7 +461,7 @@ class OverlayWindowController(
                 else -> ContextCompat.getColor(themedContext, R.color.overlay_text_muted)
             },
         )
-        logTitle?.text = if (talking) "正在对话中" else "识别日志"
+        logWindowPanel.updateTitle(talking)
         val badge = chatBadge
         if (badge != null) {
             val showBadge = talking
@@ -883,91 +477,7 @@ class OverlayWindowController(
         }
     }
 
-    private fun showLogWindow() {
-        if (logHandleView != null || logBodyView != null) return
-        val handle = LayoutInflater.from(themedContext).inflate(R.layout.overlay_log_handle, null)
-        val body = LayoutInflater.from(themedContext).inflate(R.layout.overlay_log_body, null)
-        logTitle = handle.findViewById(R.id.overlay_log_title)
-        logText = body.findViewById(R.id.overlay_log_text)
-        logScroll = body.findViewById(R.id.overlay_log_scroll)
-        logFilterAll = body.findViewById(R.id.overlay_log_filter_all)
-        logFilterAutoSkip = body.findViewById(R.id.overlay_log_filter_autoskip)
-        logFilterRoot = body.findViewById(R.id.overlay_log_filter_root)
-        logFilterOther = body.findViewById(R.id.overlay_log_filter_other)
-        logResizeView = body.findViewById(R.id.overlay_log_resize)
-        logFilterAll?.setOnClickListener { setLogFilter(null) }
-        logFilterAutoSkip?.setOnClickListener { setLogFilter("autoskip") }
-        logFilterRoot?.setOnClickListener { setLogFilter("root") }
-        logFilterOther?.setOnClickListener { setLogFilter("other") }
-        logResizeView?.let { setupLogResize(it) }
-        setLogFilter(null)
 
-        val width = dp(prefs.getInt(KEY_LOG_W, LOG_WIDTH_DP))
-        val height = dp(prefs.getInt(KEY_LOG_H, LOG_DEFAULT_HEIGHT_DP))
-        val (defaultX, defaultY) = defaultLogPosition()
-        val x = prefs.getInt(KEY_LOG_X, defaultX)
-        val y = prefs.getInt(KEY_LOG_Y, defaultY)
-
-        val handleParams = overlayParams(
-            width = width,
-            height = WindowManager.LayoutParams.WRAP_CONTENT,
-            touchable = true,
-            x = x,
-            y = y,
-        )
-        val bodyParams = overlayParams(
-            width = width,
-            height = height,
-            touchable = true,
-            x = x,
-            y = y + dp(28),
-        )
-
-        logHandleView = handle
-        logBodyView = body
-        logHandleParams = handleParams
-        logBodyParams = bodyParams
-        setupLogDrag(handle.findViewById(R.id.overlay_log_drag), handleParams)
-        handle.findViewById<View>(R.id.overlay_log_close).setOnClickListener {
-            setLogWindowVisible(false)
-        }
-        try {
-            windowManager.addView(body, bodyParams)
-            windowManager.addView(handle, handleParams)
-            handle.post {
-                clampLogWindows()
-                renderLogs()
-                logScroll?.post { logScroll?.smoothScrollTo(0, logScroll?.getChildAt(0)?.height ?: 0) }
-                val settings = settingsRepository.get()
-                appendLog("状态：root=${if (RootBridge.isRunning()) "已连接" else "未连接"} 注入=input 共享=${if (settings.screenShareEnabled) "开" else "关"} 对话=${if (settings.autoSkipEnabled) "开" else "关"}")
-            }
-        } catch (_: Throwable) {
-            hideLogWindow()
-        }
-    }
-
-    private fun hideLogWindow() {
-        listOf(logHandleView, logBodyView).forEach { view ->
-            if (view != null) {
-                try {
-                    windowManager.removeView(view)
-                } catch (_: Throwable) {
-                }
-            }
-        }
-        logHandleView = null
-        logBodyView = null
-        logHandleParams = null
-        logBodyParams = null
-        logTitle = null
-        logText = null
-        logScroll = null
-        logFilterAll = null
-        logFilterAutoSkip = null
-        logFilterRoot = null
-        logFilterOther = null
-        logResizeView = null
-    }
 
     // ===== 跳过位置取点 =====
 
@@ -1153,131 +663,10 @@ class OverlayWindowController(
         }
     }
 
-    private fun setupLogDrag(
-        dragHandle: View,
-        lp: WindowManager.LayoutParams,
-    ) {
-        var startX = 0
-        var startY = 0
-        var touchX = 0f
-        var touchY = 0f
 
-        dragHandle.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    startX = lp.x
-                    startY = lp.y
-                    touchX = event.rawX
-                    touchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    lp.x = startX + (event.rawX - touchX).toInt()
-                    lp.y = startY + (event.rawY - touchY).toInt()
-                    clampLogWindows()
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    persistLogPosition(lp)
-                    true
-                }
-                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
-            }
-        }
-    }
 
-    private fun clampLogWindows() {
-        val handleLp = logHandleParams ?: return
-        val handle = logHandleView ?: return
-        val screen = screenSize()
-        val width = if (handle.width > 0) handle.width else dp(LOG_WIDTH_DP)
-        val handleHeight = if (handle.height > 0) handle.height else dp(28)
-        val bodyHeight = logBodyView?.height?.takeIf { it > 0 } ?: dp(120)
-        val minY = 0
-        handleLp.x = handleLp.x.coerceIn(0, (screen.first - width).coerceAtLeast(0))
-        handleLp.y = handleLp.y.coerceIn(
-            minY,
-            (screen.second - handleHeight - bodyHeight).coerceAtLeast(minY),
-        )
-        updateLogLayouts()
-    }
 
-    private fun updateLogLayouts() {
-        val handleLp = logHandleParams ?: return
-        val bodyLp = logBodyParams ?: return
-        val handle = logHandleView ?: return
-        val body = logBodyView ?: return
-        val handleHeight = if (handle.height > 0) handle.height else dp(28)
-        bodyLp.x = handleLp.x
-        bodyLp.y = handleLp.y + handleHeight
-        try {
-            windowManager.updateViewLayout(handle, handleLp)
-        } catch (_: Throwable) {
-        }
-        try {
-            windowManager.updateViewLayout(body, bodyLp)
-        } catch (_: Throwable) {
-        }
-    }
 
-    private fun persistLogPosition(lp: WindowManager.LayoutParams) {
-        prefs.edit().putInt(KEY_LOG_X, lp.x).putInt(KEY_LOG_Y, lp.y).apply()
-    }
-
-    /** 日志窗口右下角缩放手柄：拖动改变窗口宽高，限制在屏幕内。 */
-    private fun setupLogResize(handle: View) {
-        var startW = 0
-        var startH = 0
-        var touchX = 0f
-        var touchY = 0f
-        handle.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    startW = logBodyParams?.width ?: return@setOnTouchListener true
-                    startH = logBodyParams?.height ?: return@setOnTouchListener true
-                    touchX = event.rawX
-                    touchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val params = logBodyParams ?: return@setOnTouchListener true
-                    val screen = screenSize()
-                    val newW = (startW + (event.rawX - touchX).toInt())
-                        .coerceIn(dp(150), (screen.first * 0.92f).toInt())
-                    val newH = (startH + (event.rawY - touchY).toInt())
-                        .coerceIn(dp(100), (screen.second * 0.85f).toInt())
-                    params.width = newW
-                    params.height = newH
-                    logHandleParams?.width = newW
-                    val body = logBodyView
-                    val handleView = logHandleView
-                    val handleLp = logHandleParams
-                    try {
-                        body?.let { windowManager.updateViewLayout(it, params) }
-                        if (handleView != null && handleLp != null) {
-                            windowManager.updateViewLayout(handleView, handleLp)
-                        }
-                    } catch (_: Throwable) {
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    logBodyParams?.let { persistLogSize(it) }
-                    clampLogWindows()
-                    true
-                }
-                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
-            }
-        }
-    }
-
-    private fun persistLogSize(lp: WindowManager.LayoutParams) {
-        val density = context.resources.displayMetrics.density
-        prefs.edit()
-            .putInt(KEY_LOG_W, (lp.width / density).toInt())
-            .putInt(KEY_LOG_H, (lp.height / density).toInt())
-            .apply()
-    }
 
     private fun setupDrag(
         dragHandle: View,
@@ -1493,8 +882,6 @@ class OverlayWindowController(
             } else {
                 persistPosition(lp)
             }
-            clampLogWindows()
-            logHandleParams?.let { persistLogPosition(it) }
         }
     }
 
@@ -1509,14 +896,6 @@ class OverlayWindowController(
         return metrics.widthPixels to metrics.heightPixels
     }
 
-    private fun defaultLogPosition(): Pair<Int, Int> {
-        val screen = screenSize()
-        val height = dp(LOG_DEFAULT_HEIGHT_DP)
-        val margin = dp(12)
-        val x = margin
-        val y = (screen.second - height - dp(48)).coerceAtLeast(statusBarHeight())
-        return x to y
-    }
 
     private fun statusBarHeight(): Int {
         val id = context.resources.getIdentifier("status_bar_height", "dimen", "android")
@@ -1524,6 +903,16 @@ class OverlayWindowController(
             return context.resources.getDimensionPixelSize(id)
         }
         return dp(28)
+    }
+
+    /** 取点窗默认初始位置（左下角）。 */
+    private fun defaultLogPosition(): Pair<Int, Int> {
+        val screen = screenSize()
+        val height = dp(LOG_DEFAULT_HEIGHT_DP)
+        val margin = dp(12)
+        val x = margin
+        val y = (screen.second - height - dp(48)).coerceAtLeast(statusBarHeight())
+        return x to y
     }
 
     private val tapIndicatorSizePx: Int by lazy { dp(TAP_INDICATOR_SIZE_DP) }
@@ -1536,21 +925,14 @@ class OverlayWindowController(
         private const val PREFS_NAME = "overlay_window"
         private const val KEY_X = "x"
         private const val KEY_Y = "y"
-        private const val KEY_LOG_X = "log_x"
-        private const val KEY_LOG_Y = "log_y"
-        private const val KEY_LOG_VISIBLE = "log_visible"
-        private const val KEY_LOG_W = "log_w"
-        private const val KEY_LOG_H = "log_h"
         private const val KEY_AUTO_SKIP_EXPANDED = "auto_skip_expanded"
         private const val KEY_LAUNCH_EXPANDED = "launch_expanded"
         private const val KEY_SNAP_EDGE = "snap_edge"
-        private const val LOG_WIDTH_DP = 260
         private const val LOG_DEFAULT_HEIGHT_DP = 148
         private const val IDLE_ALPHA = 0.62f
         private const val IDLE_DELAY_MS = 2400L
         private const val TALK_LOG_INTERVAL_MS = 2000L
         private const val TALKING_HOLD_MS = 2000L
-        private const val MAX_LOG_LINES = 400
         private const val TAP_INDICATOR_SIZE_DP = 28
         private const val TAP_INDICATOR_MS = 450L
     }
