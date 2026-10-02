@@ -17,7 +17,6 @@ import android.util.DisplayMetrics
 import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
@@ -814,34 +813,17 @@ class OverlayWindowController(
         dragHandle: View,
         lp: WindowManager.LayoutParams,
     ) {
-        var startX = 0
-        var startY = 0
-        var touchX = 0f
-        var touchY = 0f
-
-        dragHandle.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    snapAnimator?.cancel()
-                    startX = lp.x
-                    startY = lp.y
-                    touchX = event.rawX
-                    touchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    lp.x = startX + (event.rawX - touchX).toInt()
-                    lp.y = startY + (event.rawY - touchY).toInt()
-                    clampToScreen(lp)
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    persistPosition(lp)
-                    true
-                }
-                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
-            }
-        }
+        DragGestureHelper(
+            touchSlop = touchSlop,
+            initialPosition = { lp.x to lp.y },
+            onDown = { snapAnimator?.cancel() },
+            onMove = { x, y ->
+                lp.x = x
+                lp.y = y
+                clampToScreen(lp)
+            },
+            onDragEnd = { persistPosition(lp) },
+        ).attach(dragHandle)
     }
 
     private fun setupDragAndClick(
@@ -849,62 +831,31 @@ class OverlayWindowController(
         lp: WindowManager.LayoutParams,
         onClick: () -> Unit,
     ) {
-        var startX = 0
-        var startY = 0
-        var touchX = 0f
-        var touchY = 0f
-        var moved = false
-
-        dragHandle.setOnTouchListener { v, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    snapAnimator?.cancel()
-                    moved = false
-                    startX = lp.x
-                    startY = lp.y
-                    touchX = event.rawX
-                    touchY = event.rawY
-                    wakeBubble()
-                    dragHandle.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).start()
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - touchX).toInt()
-                    val dy = (event.rawY - touchY).toInt()
-                    if (!moved && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)) {
-                        moved = true
-                    }
-                    if (moved) {
-                        lp.x = startX + dx
-                        lp.y = startY + dy
-                        clampToScreen(lp)
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    dragHandle.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
-                    if (!moved) {
-                        v.performClick()
-                        onClick()
-                    } else {
-                        persistPosition(lp)
-                        snapToEdgeIfEnabled(lp, animate = true)
-                    }
-                    if (!expanded) scheduleIdleFade()
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    dragHandle.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
-                    if (moved) {
-                        persistPosition(lp)
-                        snapToEdgeIfEnabled(lp, animate = true)
-                    }
-                    if (!expanded) scheduleIdleFade()
-                    true
-                }
-                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
-            }
-        }
+        DragGestureHelper(
+            touchSlop = touchSlop,
+            initialPosition = { lp.x to lp.y },
+            onDown = {
+                snapAnimator?.cancel()
+                wakeBubble()
+                dragHandle.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).start()
+            },
+            onMove = { x, y ->
+                lp.x = x
+                lp.y = y
+                clampToScreen(lp)
+            },
+            onClick = {
+                dragHandle.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+                onClick()
+                if (!expanded) scheduleIdleFade()
+            },
+            onDragEnd = {
+                dragHandle.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+                persistPosition(lp)
+                snapToEdgeIfEnabled(lp, animate = true)
+                if (!expanded) scheduleIdleFade()
+            },
+        ).attach(dragHandle)
     }
 
     private fun snapToEdgeIfEnabled(lp: WindowManager.LayoutParams, animate: Boolean) {
