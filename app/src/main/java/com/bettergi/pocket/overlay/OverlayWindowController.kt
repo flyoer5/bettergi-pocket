@@ -17,8 +17,6 @@ import android.util.DisplayMetrics
 import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.LayoutInflater
-import android.widget.FrameLayout
-import android.widget.SeekBar
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -118,6 +116,17 @@ class OverlayWindowController(
             dp = { dp(it) },
         )
     }
+    private val skipPositionPicker: SkipPositionPicker by lazy {
+        SkipPositionPicker(
+            themedContext = themedContext,
+            windowManager = windowManager,
+            settingsRepository = settingsRepository,
+            screenSize = { screenSize() },
+            dp = { dp(it) },
+            defaultPosition = { defaultLogPosition() },
+            onFlashTap = { x, y -> flashTap(x, y) },
+        )
+    }
     private var rowAutoSkip: View? = null
     private var rowQuickSkip: View? = null
     private var rowSmartOption: View? = null
@@ -134,16 +143,6 @@ class OverlayWindowController(
     private var spChevron: ImageView? = null
     private var spStatus: TextView? = null
     private var spReset: TextView? = null
-    private var spPickerView: View? = null
-    private var spPickerParams: WindowManager.LayoutParams? = null
-    private var spCrosshairView: View? = null
-    private var spCrosshairParams: WindowManager.LayoutParams? = null
-    private var spSeekBarX: SeekBar? = null
-    private var spSeekBarY: SeekBar? = null
-    private var spTextX: TextView? = null
-    private var spTextY: TextView? = null
-    @Volatile private var spTempX: Float = 0.5f
-    @Volatile private var spTempY: Float = 0.99f
     private var talkingUntilMs: Long = 0L
     private var lastTalkLogMs: Long = 0L
     private val clearTalkingRunnable = Runnable { refreshStatus() }
@@ -229,7 +228,7 @@ class OverlayWindowController(
         rowQuickSkipPosition = root.findViewById(R.id.overlay_row_quick_skip_position)
         spStatus = root.findViewById(R.id.overlay_quick_skip_position_status)
         spReset = root.findViewById(R.id.overlay_quick_skip_position_reset)
-        rowQuickSkipPosition?.setOnClickListener { showSkipPositionPicker() }
+        rowQuickSkipPosition?.setOnClickListener { skipPositionPicker.show() }
         spReset?.setOnClickListener { settingsRepository.resetQuickSkipPosition() }
         rowSmartOption = root.findViewById(R.id.overlay_row_smart_option)
         rowBlackScreen = root.findViewById(R.id.overlay_row_black_screen)
@@ -422,7 +421,7 @@ class OverlayWindowController(
         switchEnabled = null
         switchAutoSkip = null
         switchQuickSkip = null
-        hideSkipPositionPicker()
+        skipPositionPicker.hide()
         rowQuickSkipPosition = null
         spChevron = null
         spStatus = null
@@ -783,163 +782,9 @@ class OverlayWindowController(
     }
 
 
-    private fun showSkipPositionPicker() {
-        if (spPickerView != null) return
-        val screen = screenSize()
-        val settings = settingsRepository.get()
-        spTempX = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionX else 0.5f).coerceIn(0.05f, 0.95f)
-        spTempY = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionY else 0.99f).coerceIn(0.05f, 0.95f)
 
-        val container = FrameLayout(themedContext)
-        val crosshair = View(themedContext).apply {
-            background = ContextCompat.getDrawable(themedContext, R.drawable.crosshair)
-        }
-        val size = dp(40)
-        container.addView(crosshair, FrameLayout.LayoutParams(size, size, Gravity.CENTER))
-        crosshair.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                    spTempX = (e.rawX / screen.first).coerceIn(0.05f, 0.95f)
-                    spTempY = (e.rawY / screen.second).coerceIn(0.05f, 0.95f)
-                    syncSpControls()
-                    true
-                }
-                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
-            }
-        }
-        spCrosshairView = crosshair
-        val chLp = overlayParams(
-            width = WindowManager.LayoutParams.MATCH_PARENT,
-            height = WindowManager.LayoutParams.MATCH_PARENT,
-            touchable = true,
-            x = 0,
-            y = 0,
-        )
-        spCrosshairParams = chLp
 
-        val picker = LayoutInflater.from(themedContext).inflate(R.layout.overlay_skip_position_picker, null)
-        spPickerView = picker
-        val (dx, dy) = defaultLogPosition()
-        val lp = overlayParams(
-            width = dp(240),
-            height = WindowManager.LayoutParams.WRAP_CONTENT,
-            touchable = true,
-            x = dx,
-            y = dy,
-        )
-        spPickerParams = lp
-        spSeekBarX = picker.findViewById(R.id.sp_picker_seek_x)
-        spSeekBarY = picker.findViewById(R.id.sp_picker_seek_y)
-        spTextX = picker.findViewById(R.id.sp_picker_x_text)
-        spTextY = picker.findViewById(R.id.sp_picker_y_text)
-        val dragHandle = picker.findViewById<View>(R.id.sp_picker_drag)
-        var spStartX = 0
-        var spStartY = 0
-        var spTouchX = 0f
-        var spTouchY = 0f
-        dragHandle.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    spStartX = lp.x
-                    spStartY = lp.y
-                    spTouchX = event.rawX
-                    spTouchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    lp.x = spStartX + (event.rawX - spTouchX).toInt()
-                    lp.y = spStartY + (event.rawY - spTouchY).toInt()
-                    val screen = screenSize()
-                    lp.x = lp.x.coerceIn(0, (screen.first - picker.width).coerceAtLeast(0))
-                    lp.y = lp.y.coerceIn(0, (screen.second - picker.height).coerceAtLeast(0))
-                    try {
-                        windowManager.updateViewLayout(picker, lp)
-                    } catch (_: Throwable) {
-                    }
-                    true
-                }
-                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
-            }
-        }
-        picker.findViewById<View>(R.id.sp_picker_close).setOnClickListener { hideSkipPositionPicker() }
-        picker.findViewById<View>(R.id.sp_picker_cancel).setOnClickListener { hideSkipPositionPicker() }
-        picker.findViewById<View>(R.id.sp_picker_ok).setOnClickListener {
-            settingsRepository.setQuickSkipPosition(spTempX, spTempY)
-            hideSkipPositionPicker()
-        }
-        picker.findViewById<View>(R.id.sp_picker_test).setOnClickListener {
-            flashTap((screen.first * spTempX).toInt(), (screen.second * spTempY).toInt())
-        }
-        val seek = object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val ratio = 0.05f + progress / 90f * 0.9f
-                when (seekBar?.id) {
-                    R.id.sp_picker_seek_x -> {
-                        spTempX = ratio
-                        spTextX?.text = "${(ratio * 100).toInt()}%"
-                    }
-                    R.id.sp_picker_seek_y -> {
-                        spTempY = ratio
-                        spTextY?.text = "${(ratio * 100).toInt()}%"
-                    }
-                }
-                updateCrosshairOffset()
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        }
-        spSeekBarX?.setOnSeekBarChangeListener(seek)
-        spSeekBarY?.setOnSeekBarChangeListener(seek)
-        spSeekBarX?.progress = ((spTempX - 0.05f) / 0.9f * 90).toInt()
-        spSeekBarY?.progress = ((spTempY - 0.05f) / 0.9f * 90).toInt()
-        spTextX?.text = "${(spTempX * 100).toInt()}%"
-        spTextY?.text = "${(spTempY * 100).toInt()}%"
 
-        try {
-            windowManager.addView(container, chLp)
-            windowManager.addView(picker, lp)
-            updateCrosshairOffset()
-        } catch (_: Throwable) {
-            hideSkipPositionPicker()
-        }
-    }
-
-    private fun hideSkipPositionPicker() {
-        spPickerView?.let { v ->
-            try {
-                windowManager.removeView(v)
-            } catch (_: Throwable) {
-            }
-        }
-        (spCrosshairView?.parent as? View)?.let { c ->
-            try {
-                windowManager.removeView(c)
-            } catch (_: Throwable) {
-            }
-        }
-        spPickerView = null
-        spPickerParams = null
-        spCrosshairView = null
-        spCrosshairParams = null
-        spSeekBarX = null
-        spSeekBarY = null
-        spTextX = null
-        spTextY = null
-    }
-
-    private fun syncSpControls() {
-        spSeekBarX?.progress = ((spTempX - 0.05f) / 0.9f * 90).toInt()
-        spSeekBarY?.progress = ((spTempY - 0.05f) / 0.9f * 90).toInt()
-        spTextX?.text = "${(spTempX * 100).toInt()}%"
-        spTextY?.text = "${(spTempY * 100).toInt()}%"
-        updateCrosshairOffset()
-    }
-
-    private fun updateCrosshairOffset() {
-        val screen = screenSize()
-        spCrosshairView?.translationX = spTempX * screen.first - screen.first / 2f
-        spCrosshairView?.translationY = spTempY * screen.second - screen.second / 2f
-    }
 
     private fun overlayParams(
         width: Int,
