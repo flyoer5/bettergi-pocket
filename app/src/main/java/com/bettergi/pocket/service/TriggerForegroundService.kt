@@ -181,11 +181,12 @@ class TriggerForegroundService : Service() {
         if (shutDown) return
         shutDown = true
         AppLog.i(TAG, "服务关闭中")
+        // 先撤悬浮窗（快），再停 root 后端（stop 内含兜底 kill /proc 扫描, 可能阻塞数秒, 放后面避免悬浮窗残留）
+        overlayController.hide()
         RootBridge.stop()
         genshinLaunchMonitor.stop()
         engine.release()
         captureController.stop()
-        overlayController.hide()
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 

@@ -80,11 +80,16 @@ object RootBridge {
         // 清理可能残留的旧 helper：避免文件被占用（ETXTBSY）与多实例争用 socket。
         // 注意不能用 pkill -f bgroot：执行它的 shell 命令行本身含 "bgroot" 会被自杀误杀，导致清理从未真正生效。
         // 改为按 /proc/*/comm 精确匹配进程名 bgroot 逐个 kill。
-        runCommand(
-            ctx,
-            "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done; sleep 0.2'",
-            3000L,
-        )
+        // 异步执行 + 短暂等待：全 /proc 扫描可能耗时数秒, 不阻塞连接握手（加快"打开即连"）
+        val killJob = Thread({
+            runCommand(
+                ctx,
+                "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done; sleep 0.2'",
+                3000L,
+            )
+        }, "bg-root-kill-stale").apply { isDaemon = true }
+        killJob.start()
+        killJob.join(300L)  // 最多等 300ms, 没清完也不阻塞连接
 
         val cmd = "$su -c \"$helper --server --sock $sockPath --uid ${android.os.Process.myUid()} --app-pid ${android.os.Process.myPid()}\""
         val process = try {
@@ -139,12 +144,12 @@ object RootBridge {
             "/debug_ramdisk/su",
         )
         for (p in candidates) {
-            if (runCommand(ctx, "test -x $p && echo yes", 1500L)?.trim() == "yes") {
+            if (runCommand(ctx, "test -x $p && echo yes", 500L)?.trim() == "yes") {
                 suPath = p
                 return p
             }
         }
-        val found = runCommand(ctx, "command -v su", 1500L)?.trim()
+        val found = runCommand(ctx, "command -v su", 500L)?.trim()
         return if (!found.isNullOrEmpty()) found else "su"
     }
 
@@ -283,14 +288,17 @@ object RootBridge {
         }
         // 兜底：QUIT 未送达（socket 已断）时强杀残留 helper，保证退出后系统干净、覆盖安装不被拖慢。
         // 进程名 bgroot 仅本 app 使用，按 /proc/*/comm 精确匹配安全。
+        // 异步执行：全 /proc 扫描 + su 启动可能耗时数秒, 不阻塞调用方（stop/start 主线程调用时避免卡 UI/悬浮窗残留）
         val su = suPath
         val ctx = appContext
         if (su != null && ctx != null) {
-            runCommand(
-                ctx,
-                "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done'",
-                2000L,
-            )
+            Thread({
+                runCommand(
+                    ctx,
+                    "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done'",
+                    2000L,
+                )
+            }, "bg-root-kill-stale").apply { isDaemon = true }.start()
         }
         socket = null
         output = null
