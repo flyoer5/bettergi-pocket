@@ -32,12 +32,15 @@ object RootBridge {
 
     @Volatile
     private var running = false
+    /** 连接对象：socket + 输出流 + 读缓冲，整体替换避免撕裂读 */
+    private class Connection(
+        val socket: LocalSocket,
+        val output: OutputStream,
+        val reader: BufferedReader,
+    )
+
     @Volatile
-    private var socket: LocalSocket? = null
-    @Volatile
-    private var output: OutputStream? = null
-    @Volatile
-    private var reader: BufferedReader? = null
+    private var connection: Connection? = null
     @Volatile
     private var helperProcess: Process? = null
 
@@ -111,9 +114,7 @@ object RootBridge {
                 return false
             }
             val s = tryConnect(sockPath, logFailure = firstFail).also { if (it == null) firstFail = false } ?: continue
-            socket = s
-            output = s.outputStream
-            reader = BufferedReader(InputStreamReader(s.inputStream), 1024)
+            connection = Connection(s, s.outputStream, BufferedReader(InputStreamReader(s.inputStream), 1024))
             val pong = request("PING", PING_TIMEOUT_MS)?.trim()
             if (pong == "OK pong" || pong == "pong") {
                 running = true
@@ -201,14 +202,12 @@ object RootBridge {
      */
     @Synchronized
     fun request(cmd: String, timeoutMs: Long = 5000L): String? {
-        val sock = socket ?: return null
-        val out = output ?: return null
-        val rd = reader ?: return null
+        val conn = connection ?: return null
         return try {
-            sock.soTimeout = timeoutMs.toInt()
-            out.write((cmd + "\n").toByteArray(Charsets.UTF_8))
-            out.flush()
-            val line = rd.readLine() ?: run {
+            conn.socket.soTimeout = timeoutMs.toInt()
+            conn.output.write((cmd + "\n").toByteArray(Charsets.UTF_8))
+            conn.output.flush()
+            val line = conn.reader.readLine() ?: run {
                 markDisconnected("对端关闭")
                 null
             }
@@ -274,12 +273,12 @@ object RootBridge {
     private fun cleanupResources() {
         running = false
         try {
-            output?.write("QUIT\n".toByteArray(Charsets.UTF_8))
-            output?.flush()
+            connection?.output?.write("QUIT\n".toByteArray(Charsets.UTF_8))
+            connection?.output?.flush()
         } catch (_: Exception) {
         }
         try {
-            socket?.close()
+            connection?.socket?.close()
         } catch (_: Exception) {
         }
         try {
@@ -300,9 +299,7 @@ object RootBridge {
                 )
             }, "bg-root-kill-stale").apply { isDaemon = true }.start()
         }
-        socket = null
-        output = null
-        reader = null
+        connection = null
         helperProcess = null
     }
 
