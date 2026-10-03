@@ -1,7 +1,6 @@
 package com.bettergi.pocket.overlay
 
 import android.content.Context
-import android.graphics.PixelFormat
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -66,7 +65,7 @@ class SkipPositionPicker(
             }
         }
         crosshairView = crosshair
-        val chLp = overlayParams(
+        val chLp = OverlayWindowParams.create(
             width = WindowManager.LayoutParams.MATCH_PARENT,
             height = WindowManager.LayoutParams.MATCH_PARENT,
             touchable = true,
@@ -78,7 +77,7 @@ class SkipPositionPicker(
         val picker = LayoutInflater.from(themedContext).inflate(R.layout.overlay_skip_position_picker, null)
         pickerView = picker
         val (dx, dy) = defaultPosition()
-        val lp = overlayParams(
+        val lp = OverlayWindowParams.create(
             width = dp(240),
             height = WindowManager.LayoutParams.WRAP_CONTENT,
             touchable = true,
@@ -201,27 +200,4 @@ class SkipPositionPicker(
         crosshairView?.translationY = tempY * screen.second - screen.second / 2f
     }
 
-    private fun overlayParams(
-        width: Int,
-        height: Int,
-        touchable: Boolean,
-        x: Int,
-        y: Int,
-    ): WindowManager.LayoutParams {
-        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            if (touchable) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        return WindowManager.LayoutParams(
-            width,
-            height,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            flags,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            this.x = x
-            this.y = y
-        }
-    }
 }

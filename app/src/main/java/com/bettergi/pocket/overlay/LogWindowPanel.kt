@@ -1,10 +1,8 @@
 package com.bettergi.pocket.overlay
 
 import android.content.Context
-import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -224,14 +222,14 @@ class LogWindowPanel(
         val x = prefs.getInt(KEY_LOG_X, defaultX)
         val y = prefs.getInt(KEY_LOG_Y, defaultY)
 
-        val handleParams = overlayParams(
+        val handleParams = OverlayWindowParams.create(
             width = width,
             height = WindowManager.LayoutParams.WRAP_CONTENT,
             touchable = true,
             x = x,
             y = y,
         )
-        val bodyParams = overlayParams(
+        val bodyParams = OverlayWindowParams.create(
             width = width,
             height = height,
             touchable = true,
@@ -289,29 +287,6 @@ class LogWindowPanel(
         logLines.clear()
     }
 
-    private fun overlayParams(
-        width: Int,
-        height: Int,
-        touchable: Boolean,
-        x: Int,
-        y: Int,
-    ): WindowManager.LayoutParams {
-        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            if (touchable) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        return WindowManager.LayoutParams(
-            width,
-            height,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            flags,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            this.x = x
-            this.y = y
-        }
-    }
 
     private fun setupLogDrag(
         dragHandle: View,
