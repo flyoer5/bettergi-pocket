@@ -5,7 +5,6 @@ sealed interface AutomationAction
 data class ClickAction(
     val x: Int,
     val y: Int,
-    val durationMs: Long = 50L,
 ) : AutomationAction
 
 data object BackAction : AutomationAction

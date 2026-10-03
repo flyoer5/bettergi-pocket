@@ -46,35 +46,6 @@ class RecognitionObject {
         return this
     }
 
-    fun clone(): RecognitionObject {
-        val cloned = RecognitionObject()
-        cloned.recognitionType = recognitionType
-        cloned.regionOfInterest = regionOfInterest
-        cloned.name = name
-        cloned.referenceImageSize = referenceImageSize
-        cloned.referenceBoundingBox = referenceBoundingBox
-        cloned.searchOptions = searchOptions?.copy()
-        cloned.templateImageMat = templateImageMat
-        cloned.templateImageGreyMat = templateImageGreyMat
-        cloned.threshold = threshold
-        cloned.use3Channels = use3Channels
-        cloned.templateMatchMode = templateMatchMode
-        cloned.useMask = useMask
-        cloned.maskColor = maskColor
-        cloned.maskMat = maskMat
-        cloned.maxMatchCount = maxMatchCount
-        cloned.useBinaryMatch = useBinaryMatch
-        cloned.binaryThreshold = binaryThreshold
-        cloned.colorConversion = colorConversion
-        cloned.lowerColor = lowerColor
-        cloned.upperColor = upperColor
-        cloned.replaceDictionary = replaceDictionary
-        cloned.allContainMatchText = allContainMatchText
-        cloned.oneContainMatchText = oneContainMatchText
-        cloned.regexMatchText = regexMatchText
-        cloned.text = text
-        return cloned
-    }
 
     companion object {
         fun templateMatch(mat: Mat): RecognitionObject {

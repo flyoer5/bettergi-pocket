@@ -55,17 +55,6 @@ class TemplateAssetLoader(
         return decoded
     }
 
-    fun loadRecognitionObject(
-        taskName: String,
-        fileName: String,
-        captureWidth: Int,
-        captureHeight: Int,
-    ): RecognitionObject {
-        return RecognitionObject.templateMatch(load(taskName, fileName, captureWidth, captureHeight)).apply {
-            name = fileName
-        }
-    }
-
     private fun path(taskName: String, resolution: String, fileName: String): String {
         return "recognition/$taskName/$resolution/$fileName"
     }

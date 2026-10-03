@@ -3,7 +3,6 @@ package com.bettergi.pocket.recognition.ocr
 import android.content.Context
 import android.util.Log
 import com.bettergi.pocket.recognition.IntRect
-import com.bettergi.pocket.recognition.OcrText
 import com.bettergi.pocket.recognition.opencv.MatOps
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
@@ -35,10 +34,6 @@ data class OcrResult(
 
 interface IOcrService {
     fun recognize(mat: Mat): OcrResult
-
-    fun recognizeWithoutDetector(mat: Mat): OcrResult = recognize(mat)
-
-    fun recognizeText(mat: Mat): String = OcrText.removeAllSpace(recognize(mat).text)
 }
 
 object UnavailableOcrService : IOcrService {
