@@ -314,13 +314,26 @@ static int handle_line(const char *line, char *resp, size_t resp_sz) {
         char pkg[128];
         if (sscanf(line, "KEEPALIVE %127s", pkg) == 1 && valid_pkg(pkg)) {
             char cmd[320];
+            int ok = 0;
             snprintf(cmd, sizeof(cmd), "dumpsys deviceidle whitelist +%s >/dev/null 2>&1", pkg);
             FILE *p1 = popen(cmd, "r");
-            if (p1) pclose(p1);
+            if (p1) {
+                ok |= (pclose(p1) == 0) ? 0 : 1;
+            } else {
+                ok = 1;
+            }
             snprintf(cmd, sizeof(cmd), "am set-standby-bucket %s active >/dev/null 2>&1", pkg);
             FILE *p2 = popen(cmd, "r");
-            if (p2) pclose(p2);
-            snprintf(resp, resp_sz, "OK keepalive\n");
+            if (p2) {
+                ok |= (pclose(p2) == 0) ? 0 : 1;
+            } else {
+                ok = 1;
+            }
+            if (ok == 0) {
+                snprintf(resp, resp_sz, "OK keepalive\n");
+            } else {
+                snprintf(resp, resp_sz, "ERR keepalive\n");
+            }
         } else {
             snprintf(resp, resp_sz, "ERR bad package\n");
         }
