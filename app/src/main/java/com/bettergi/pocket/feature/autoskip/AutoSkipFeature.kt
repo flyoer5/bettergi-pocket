@@ -37,6 +37,9 @@ class AutoSkipFeature(
     private var state = State.IDLE
 
     @Volatile
+    private var clickedOptionX: Int = -1
+
+    @Volatile
     private var clickedOptionY: Int = -1
 
     @Volatile
@@ -112,7 +115,6 @@ class AutoSkipFeature(
 
                 val now = System.currentTimeMillis()
                 if (now < clickedAtMs + CONFIRM_WINDOW_MS && clickedOptionY >= 0) return
-
                 // 1) 感叹号选项：优先级最高，命中直接点
                 val excls = content.findMulti(
                     assets.get(TASK_NAME, "ExclamationIcon", content.captureRectArea),
@@ -123,6 +125,7 @@ class AutoSkipFeature(
                     events?.onAutoSkipLog("点击感叹号选项 ($x, $y)")
                     actions.emit(ClickAction(x, y))
                     events?.onChatIconClicked(x, y)
+                    clickedOptionX = excls[0].x
                     clickedOptionY = excls[0].y
                     clickedAtMs = now
                     state = State.CONFIRMING
@@ -147,6 +150,7 @@ class AutoSkipFeature(
                 Log.i(TAG, "click option at $topX,$topY")
                 actions.emit(ClickAction(topX, topY))
                 events?.onChatIconClicked(topX, topY)
+                clickedOptionX = target.x
                 clickedOptionY = target.y
                 clickedAtMs = now
                 state = State.CONFIRMING
@@ -163,10 +167,11 @@ class AutoSkipFeature(
                 val hits = content.findMulti(chatIcon)
                 val top = selectTopChatIcon(hits)
 
-                val changed = top == null || top.y != clickedOptionY || hits.none { it.y == clickedOptionY }
+                val changed = top == null || hits.none { it.y == clickedOptionY && it.x == clickedOptionX }
                 if (changed) {
                     events?.onAutoSkipLog("选项已变化，点击生效")
                     state = State.IN_DIALOG
+                    clickedOptionX = -1
                     clickedOptionY = -1
                     return
                 }
@@ -175,6 +180,7 @@ class AutoSkipFeature(
                     events?.onAutoSkipLog("选项未变化，超时重试")
                     state = State.IN_DIALOG
                     clickedAtMs = 0L
+                    clickedOptionX = -1
                     clickedOptionY = -1
                 }
             }

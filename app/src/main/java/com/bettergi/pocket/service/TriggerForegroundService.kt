@@ -205,6 +205,13 @@ class TriggerForegroundService : Service() {
         val intent = Intent(this, CapturePermissionActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(intent)
+        // 兜底复位：Activity 被系统回收/用户不响应时，30s 后放行再次请求，避免标志永久卡死
+        mainHandler.postDelayed({
+            if (requestingCapturePermission) {
+                requestingCapturePermission = false
+                AppLog.w(TAG, "请求捕获权限超时，已复位")
+            }
+        }, CAPTURE_PERMISSION_TIMEOUT_MS)
     }
 
     private fun startInForeground(sharing: Boolean) {
@@ -277,5 +284,6 @@ class TriggerForegroundService : Service() {
         private const val TAG = "BetterGI.Service"
         private const val NOTIFICATION_CHANNEL_ID = "bettergi_pocket_trigger"
         private const val NOTIFICATION_ID = 1001
+        private const val CAPTURE_PERMISSION_TIMEOUT_MS = 30_000L
     }
 }
