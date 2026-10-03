@@ -213,11 +213,29 @@ object RootBridge {
             line
         } catch (e: SocketTimeoutException) {
             AppLog.w(TAG, "request 超时: $cmd")
+            drainResidual(conn)
             null
         } catch (e: Exception) {
             AppLog.w(TAG, "request failed: $cmd -> ${e.message}")
             markDisconnected("request 异常: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * 丢弃超时后 socket 里残留的回复行：helper 可能在超时后仍写完响应，
+     * 不清空会让下次 request 读到旧数据造成协议错位。
+     * 仅清空当前已缓冲字节，不阻塞（读不到就放弃）。
+     */
+    private fun drainResidual(conn: Connection) {
+        try {
+            val avail = conn.socket.inputStream.available()
+            if (avail > 0) {
+                val buf = ByteArray(avail)
+                val read = conn.socket.inputStream.read(buf, 0, avail)
+                if (read > 0) AppLog.d(TAG, "drained ${read}B 残留回复")
+            }
+        } catch (_: Throwable) {
         }
     }
 
