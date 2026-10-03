@@ -50,8 +50,7 @@ object RootBridge {
 
     @Volatile
     private var userStopped = false
-    @Volatile
-    private var reconnectPending = false
+    private val reconnectPending = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile
     private var consecutiveFailures = 0
     private val reconnectExecutor = Executors.newSingleThreadScheduledExecutor { r ->
@@ -266,6 +265,7 @@ object RootBridge {
     fun stop() {
         if (running) AppLog.i(TAG, "root 后端停止")
         userStopped = true
+        reconnectPending.set(false)
         cleanupResources()
     }
 
@@ -312,10 +312,10 @@ object RootBridge {
     }
 
     private fun scheduleReconnect() {
-        if (reconnectPending) return
-        reconnectPending = true
+        // 原子 check+set: 防多线程同时调度重连
+        if (!reconnectPending.compareAndSet(false, true)) return
         reconnectExecutor.schedule({
-            reconnectPending = false
+            reconnectPending.set(false)
             if (userStopped || appContext == null) return@schedule
             AppLog.i(TAG, "root 自动重连（第 ${consecutiveFailures + 1} 次）")
             if (start()) {
