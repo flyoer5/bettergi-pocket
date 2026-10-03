@@ -72,7 +72,7 @@ class TriggerEngine(
                 if (needFrame) {
                     val captured = captureController.acquireLatestBgr()
                     if (captured != null) {
-                        CaptureContent.fromBgr(captured.bgr, captured.width, captured.height).use { content ->
+                        CaptureContent.fromBgr(captured.bgr).use { content ->
                             val tick = FeatureTick(captured.width, captured.height, content)
                             enabled.forEach { it.onTick(tick, settings, emitter) }
                         }

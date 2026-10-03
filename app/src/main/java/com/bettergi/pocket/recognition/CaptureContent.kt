@@ -17,7 +17,6 @@ import org.opencv.core.Mat
 class CaptureContent(
     val nativeRegion: GameCaptureRegion,
     val captureRectArea: ImageRegion,
-    val scale: CaptureScale,
     val frameIndex: Int,
 ) : AutoCloseable {
     fun find(ro: RecognitionObject): Region = captureRectArea.find(ro)
@@ -34,8 +33,6 @@ class CaptureContent(
     companion object {
         fun fromBgr(
             bgr: Mat,
-            width: Int,
-            height: Int,
             frameIndex: Int = 0,
             ocrService: IOcrService = OcrFactory.default,
         ): CaptureContent {
@@ -47,7 +44,6 @@ class CaptureContent(
             return CaptureContent(
                 nativeRegion = native,
                 captureRectArea = recognition,
-                scale = CaptureScale.fromCaptureSize(width, height),
                 frameIndex = frameIndex,
             )
         }
