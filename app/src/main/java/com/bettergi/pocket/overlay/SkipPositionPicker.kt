@@ -1,6 +1,5 @@
 package com.bettergi.pocket.overlay
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.PixelFormat
 import android.view.Gravity

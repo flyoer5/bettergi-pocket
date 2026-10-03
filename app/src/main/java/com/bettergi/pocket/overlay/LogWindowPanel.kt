@@ -1,7 +1,6 @@
 package com.bettergi.pocket.overlay
 
 import android.content.Context
-import android.content.res.ColorStateList
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
@@ -13,7 +12,6 @@ import android.view.WindowManager
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
-import androidx.core.widget.ImageViewCompat
 import com.bettergi.pocket.R
 import com.bettergi.pocket.log.AppLog
 import com.bettergi.pocket.root.RootBridge
