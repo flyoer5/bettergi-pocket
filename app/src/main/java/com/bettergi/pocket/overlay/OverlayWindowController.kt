@@ -21,7 +21,6 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
-import android.view.animation.PathInterpolator
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.ScrollView
@@ -484,10 +483,10 @@ class OverlayWindowController(
             panel.animate().cancel()
             panel.animate()
                 .alpha(0f)
-                .scaleX(0.9f)
-                .scaleY(0.9f)
-                .setDuration(160)
-                .setInterpolator(PathInterpolator(0.22f, 1f, 0.36f, 1f))
+                .scaleX(OverlayAnim.SCALE_PANEL_OUT)
+                .scaleY(OverlayAnim.SCALE_PANEL_OUT)
+                .setDuration(OverlayAnim.DUR_EXIT)
+                .setInterpolator(OverlayAnim.EASE)
                 .withEndAction { onExit() }
                 .start()
         } else {
@@ -504,7 +503,7 @@ class OverlayWindowController(
         transforming = true
         bubble.animate().cancel()
         panel.animate().cancel()
-        val ease = PathInterpolator(0.22f, 1f, 0.36f, 1f)
+        val ease = OverlayAnim.EASE
 
         if (value) {
             refreshLaunchHint()
@@ -519,9 +518,9 @@ class OverlayWindowController(
                 clampPanelHeight()
                 bubble.animate()
                     .alpha(0f)
-                    .scaleX(0.72f)
-                    .scaleY(0.72f)
-                    .setDuration(160)
+                    .scaleX(OverlayAnim.SCALE_BUBBLE)
+                    .scaleY(OverlayAnim.SCALE_BUBBLE)
+                    .setDuration(OverlayAnim.DUR_BUBBLE_OUT)
                     .setInterpolator(ease)
                     .withEndAction {
                         bubble.visibility = View.GONE
@@ -533,7 +532,7 @@ class OverlayWindowController(
                     .alpha(1f)
                     .scaleX(1f)
                     .scaleY(1f)
-                    .setDuration(280)
+                    .setDuration(OverlayAnim.DUR_EXPAND_PANEL)
                     .setInterpolator(ease)
                     .withEndAction {
                         transforming = false
@@ -548,9 +547,9 @@ class OverlayWindowController(
             bubble.visibility = View.VISIBLE
             panel.animate()
                 .alpha(0f)
-                .scaleX(0.88f)
-                .scaleY(0.88f)
-                .setDuration(200)
+                .scaleX(OverlayAnim.SCALE_PANEL_IN)
+                .scaleY(OverlayAnim.SCALE_PANEL_IN)
+                .setDuration(OverlayAnim.DUR_COLLAPSE_PANEL)
                 .setInterpolator(ease)
                 .withEndAction {
                     panel.visibility = View.GONE
@@ -563,7 +562,7 @@ class OverlayWindowController(
                 .alpha(1f)
                 .scaleX(1f)
                 .scaleY(1f)
-                .setDuration(240)
+                .setDuration(OverlayAnim.DUR_BUBBLE_IN)
                 .setInterpolator(ease)
                 .withEndAction {
                     transforming = false
@@ -717,7 +716,7 @@ class OverlayWindowController(
         if (!expanded) {
             panelScroll?.post { panelScroll?.scrollTo(0, 0) }
         }
-        autoSkipChevron?.animate()?.rotation(if (expanded) 90f else 0f)?.setDuration(160)?.start()
+        autoSkipChevron?.animate()?.rotation(if (expanded) 90f else 0f)?.setDuration(OverlayAnim.DUR_INDICATOR)?.start()
         clampPanelHeight()
     }
 
@@ -730,7 +729,7 @@ class OverlayWindowController(
         if (!expanded) {
             panelScroll?.post { panelScroll?.scrollTo(0, 0) }
         }
-        launchChevron?.animate()?.rotation(if (expanded) 90f else 0f)?.setDuration(160)?.start()
+        launchChevron?.animate()?.rotation(if (expanded) 90f else 0f)?.setDuration(OverlayAnim.DUR_INDICATOR)?.start()
         clampPanelHeight()
     }
 
@@ -771,9 +770,9 @@ class OverlayWindowController(
             if (showBadge && badge.visibility != View.VISIBLE) {
                 badge.alpha = 0f
                 badge.visibility = View.VISIBLE
-                badge.animate().alpha(1f).setDuration(160).start()
+                badge.animate().alpha(1f).setDuration(OverlayAnim.DUR_INDICATOR).start()
             } else if (!showBadge && badge.visibility == View.VISIBLE) {
-                badge.animate().alpha(0f).setDuration(160).withEndAction {
+                badge.animate().alpha(0f).setDuration(OverlayAnim.DUR_INDICATOR).withEndAction {
                     badge.visibility = View.GONE
                 }.start()
             }
@@ -837,7 +836,7 @@ class OverlayWindowController(
             onDown = {
                 snapAnimator?.cancel()
                 wakeBubble()
-                dragHandle.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).start()
+                dragHandle.animate().scaleX(OverlayAnim.SCALE_PRESS).scaleY(OverlayAnim.SCALE_PRESS).setDuration(OverlayAnim.DUR_PRESS).start()
             },
             onMove = { x, y ->
                 lp.x = x
@@ -845,12 +844,12 @@ class OverlayWindowController(
                 clampToScreen(lp)
             },
             onClick = {
-                dragHandle.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+                dragHandle.animate().scaleX(1f).scaleY(1f).setDuration(OverlayAnim.DUR_RELEASE).start()
                 onClick()
                 if (!expanded) scheduleIdleFade()
             },
             onDragEnd = {
-                dragHandle.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+                dragHandle.animate().scaleX(1f).scaleY(1f).setDuration(OverlayAnim.DUR_RELEASE).start()
                 persistPosition(lp)
                 snapToEdgeIfEnabled(lp, animate = true)
                 if (!expanded) scheduleIdleFade()
