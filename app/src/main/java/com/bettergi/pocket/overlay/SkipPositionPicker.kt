@@ -90,34 +90,21 @@ class SkipPositionPicker(
         textX = picker.findViewById(R.id.sp_picker_x_text)
         textY = picker.findViewById(R.id.sp_picker_y_text)
         val dragHandle = picker.findViewById<View>(R.id.sp_picker_drag)
-        var startX = 0
-        var startY = 0
-        var touchX = 0f
-        var touchY = 0f
-        dragHandle.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    startX = lp.x
-                    startY = lp.y
-                    touchX = event.rawX
-                    touchY = event.rawY
-                    true
+        DragGestureHelper(
+            touchSlop = 0,
+            initialPosition = { lp.x to lp.y },
+            onMove = { x, y ->
+                lp.x = x
+                lp.y = y
+                val screen = screenSize()
+                lp.x = lp.x.coerceIn(0, (screen.first - picker.width).coerceAtLeast(0))
+                lp.y = lp.y.coerceIn(0, (screen.second - picker.height).coerceAtLeast(0))
+                try {
+                    windowManager.updateViewLayout(picker, lp)
+                } catch (_: Throwable) {
                 }
-                MotionEvent.ACTION_MOVE -> {
-                    lp.x = startX + (event.rawX - touchX).toInt()
-                    lp.y = startY + (event.rawY - touchY).toInt()
-                    val screen = screenSize()
-                    lp.x = lp.x.coerceIn(0, (screen.first - picker.width).coerceAtLeast(0))
-                    lp.y = lp.y.coerceIn(0, (screen.second - picker.height).coerceAtLeast(0))
-                    try {
-                        windowManager.updateViewLayout(picker, lp)
-                    } catch (_: Throwable) {
-                    }
-                    true
-                }
-                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
-            }
-        }
+            },
+        ).attach(dragHandle)
         picker.findViewById<View>(R.id.sp_picker_close).setOnClickListener { hide() }
         picker.findViewById<View>(R.id.sp_picker_cancel).setOnClickListener { hide() }
         picker.findViewById<View>(R.id.sp_picker_ok).setOnClickListener {

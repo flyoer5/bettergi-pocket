@@ -292,33 +292,16 @@ class LogWindowPanel(
         dragHandle: View,
         lp: WindowManager.LayoutParams,
     ) {
-        var startX = 0
-        var startY = 0
-        var touchX = 0f
-        var touchY = 0f
-
-        dragHandle.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    startX = lp.x
-                    startY = lp.y
-                    touchX = event.rawX
-                    touchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    lp.x = startX + (event.rawX - touchX).toInt()
-                    lp.y = startY + (event.rawY - touchY).toInt()
-                    clampLogWindows()
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    persistLogPosition(lp)
-                    true
-                }
-                else -> true // 消费未处理事件（如注入触摸的 POINTER_DOWN），避免系统对手势发 CANCEL 致拖动断触
-            }
-        }
+        DragGestureHelper(
+            touchSlop = 0,
+            initialPosition = { lp.x to lp.y },
+            onMove = { x, y ->
+                lp.x = x
+                lp.y = y
+                clampLogWindows()
+            },
+            onDragEnd = { persistLogPosition(lp) },
+        ).attach(dragHandle)
     }
 
     private fun clampLogWindows() {
