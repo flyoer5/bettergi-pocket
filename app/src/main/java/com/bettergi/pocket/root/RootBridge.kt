@@ -47,6 +47,8 @@ object RootBridge {
     private var appContext: Context? = null
     @Volatile
     private var suPath: String? = null
+    @Volatile
+    private var uinputUnavailable = false
 
     @Volatile
     private var userStopped = false
@@ -119,6 +121,7 @@ object RootBridge {
                 running = true
                 userStopped = false
                 consecutiveFailures = 0
+                uinputUnavailable = false
                 AppLog.i(TAG, "root 已连接")
                 applyKeepAlive()
                 return true
@@ -248,8 +251,15 @@ object RootBridge {
         return null
     }
 
-    /** input 命令模式点击（屏幕坐标，经 su 执行系统命令注入，全 root 方案兼容）。 */
+    /** 点击注入：优先 uinput（socket 直达独立虚拟设备，毫秒级、与用户操作并行）；失败回退 input 命令。 */
     fun inputTap(x: Int, y: Int): Boolean {
+        if (!uinputUnavailable) {
+            val resp = request("TAP $x $y 60", 1500L)
+            if (resp != null) {
+                if (resp.startsWith("OK")) return true
+                if (resp.startsWith("ERR uinput")) uinputUnavailable = true
+            }
+        }
         val ctx = appContext ?: return false
         val cmd = "${resolveSu()} -c \"input tap $x $y\""
         if (runCommand(ctx, cmd, 2500L) == null) {
@@ -259,8 +269,15 @@ object RootBridge {
         return true
     }
 
-    /** input 命令模式返回键。 */
+    /** 返回键注入：优先 socket BACK（uinput 不可用时回退 input 命令）。 */
     fun inputBack(): Boolean {
+        if (!uinputUnavailable) {
+            val resp = request("BACK", 1500L)
+            if (resp != null) {
+                if (resp.startsWith("OK")) return true
+                if (resp.startsWith("ERR uinput")) uinputUnavailable = true
+            }
+        }
         val ctx = appContext ?: return false
         val cmd = "${resolveSu()} -c \"input keyevent 4\""
         if (runCommand(ctx, cmd, 2500L) == null) {

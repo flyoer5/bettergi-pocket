@@ -458,6 +458,7 @@ static int run_server(const char *sock_path, int allow_uid) {
     }
     close(sfd);
     unlink(sock_path);
+    if (ufd >= 0) destroy_uinput();
     return 0;
 }
 
@@ -508,12 +509,17 @@ int main(int argc, char **argv) {
     }
 
     if (has_flag(argc, argv, "--server")) {
-        /* root 版统一走系统 input 注入（InputManager 正规管线，等同真实手指）。
-         * 不再创建 uinput 虚拟触摸设备：独立的 DIRECT 触摸设备产生 DOWN 时，
-         * 系统可能对窗口进行中的手势发 ACTION_CANCEL，导致用户拖动断触。 */
-        ufd = -1;
-        fprintf(stderr, "OK server mode (no uinput, input-cmd injection)\n");
-        fflush(stderr);
+        /* server 模式创建 uinput 虚拟多点触摸设备（INPUT_PROP_DIRECT）：
+         * 独立设备独立 slot，游戏按"第二根手指"处理，与用户真实操作并行不互扰。
+         * 注入走 socket 直达（毫秒级），不依赖 input 命令。 */
+        ufd = create_uinput();
+        if (ufd < 0) {
+            fprintf(stderr, "WARN uinput unavailable: %s (fallback input-cmd injection)\n", strerror(errno));
+            fflush(stderr);
+        } else {
+            fprintf(stderr, "OK uinput ready BetterGI Virtual Touch (%dx%d)\n", scr_w, scr_h);
+            fflush(stderr);
+        }
     } else {
         ufd = create_uinput();
         if (ufd < 0) {
