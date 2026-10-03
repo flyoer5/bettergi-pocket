@@ -2,7 +2,6 @@ package com.bettergi.pocket.recognition.opencv
 
 import android.graphics.Bitmap
 import android.media.Image
-import com.bettergi.pocket.capture.Frame
 import com.bettergi.pocket.recognition.ColorBgr
 import com.bettergi.pocket.recognition.ColorConversion
 import com.bettergi.pocket.recognition.IntRect
@@ -53,8 +52,6 @@ object MatOps {
             rgba.release()
         }
     }
-
-    fun frameToBgr(frame: Frame): Mat = rgbaToBgr(frame.width, frame.height, frame.rgba8888)
 
     fun bgrToGray(src: Mat): Mat {
         val gray = Mat()
