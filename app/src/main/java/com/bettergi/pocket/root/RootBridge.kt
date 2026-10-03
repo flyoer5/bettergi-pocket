@@ -300,7 +300,8 @@ object RootBridge {
         } catch (_: Exception) {
         }
         try {
-            helperProcess?.destroy()
+            // helperProcess 是 su 包装进程（bgroot 是其子进程），强杀进程树避免 bgroot 残留
+            helperProcess?.destroyForcibly()
         } catch (_: Exception) {
         }
         // 兜底：QUIT 未送达（socket 已断）时强杀残留 helper，保证退出后系统干净、覆盖安装不被拖慢。
