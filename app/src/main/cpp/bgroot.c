@@ -509,17 +509,13 @@ int main(int argc, char **argv) {
     }
 
     if (has_flag(argc, argv, "--server")) {
-        /* server 模式创建 uinput 虚拟多点触摸设备（INPUT_PROP_DIRECT）：
-         * 独立设备独立 slot，游戏按"第二根手指"处理，与用户真实操作并行不互扰。
-         * 注入走 socket 直达（毫秒级），不依赖 input 命令。 */
-        ufd = create_uinput();
-        if (ufd < 0) {
-            fprintf(stderr, "WARN uinput unavailable: %s (fallback input-cmd injection)\n", strerror(errno));
-            fflush(stderr);
-        } else {
-            fprintf(stderr, "OK uinput ready BetterGI Virtual Touch (%dx%d)\n", scr_w, scr_h);
-            fflush(stderr);
-        }
+        /* 实测结论: uinput 虚拟设备注入的事件原神(米哈游引擎)不响应
+         * (点击光圈出现但游戏无反应), 只有 input 命令(InputManager 正规管线,
+         * 复用真实触摸屏 deviceId)游戏才认可。server 模式不创建 uinput,
+         * 注入统一走 input 命令。 */
+        ufd = -1;
+        fprintf(stderr, "OK server mode (input-cmd injection)\n");
+        fflush(stderr);
     } else {
         ufd = create_uinput();
         if (ufd < 0) {

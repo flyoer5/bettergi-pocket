@@ -251,8 +251,15 @@ object RootBridge {
         return null
     }
 
-    /** 点击注入：优先 uinput（socket 直达独立虚拟设备，毫秒级、与用户操作并行）；失败回退 input 命令。 */
+    /**
+     * 点击注入：input 命令优先（InputManager 正规管线，复用真实触摸屏 deviceId，
+     * 原神等米哈游引擎认可）；uinput 虚拟设备会被游戏过滤（实测点击光圈出现但无响应），仅作回退。
+     */
     fun inputTap(x: Int, y: Int): Boolean {
+        val ctx = appContext ?: return false
+        val cmd = "${resolveSu()} -c \"input tap $x $y\""
+        if (runCommand(ctx, cmd, 2500L) != null) return true
+        AppLog.w(TAG, "input 注入失败 ($x,$y)，尝试 uinput 回退")
         if (!uinputUnavailable) {
             val resp = request("TAP $x $y 60", 1500L)
             if (resp != null) {
@@ -260,17 +267,15 @@ object RootBridge {
                 if (resp.startsWith("ERR uinput")) uinputUnavailable = true
             }
         }
-        val ctx = appContext ?: return false
-        val cmd = "${resolveSu()} -c \"input tap $x $y\""
-        if (runCommand(ctx, cmd, 2500L) == null) {
-            AppLog.w(TAG, "input 注入失败 ($x,$y)")
-            return false
-        }
-        return true
+        return false
     }
 
-    /** 返回键注入：优先 socket BACK（uinput 不可用时回退 input 命令）。 */
+    /** 返回键注入：input 命令优先，socket BACK 仅作回退。 */
     fun inputBack(): Boolean {
+        val ctx = appContext ?: return false
+        val cmd = "${resolveSu()} -c \"input keyevent 4\""
+        if (runCommand(ctx, cmd, 2500L) != null) return true
+        AppLog.w(TAG, "input 返回键失败，尝试 socket BACK 回退")
         if (!uinputUnavailable) {
             val resp = request("BACK", 1500L)
             if (resp != null) {
@@ -278,13 +283,7 @@ object RootBridge {
                 if (resp.startsWith("ERR uinput")) uinputUnavailable = true
             }
         }
-        val ctx = appContext ?: return false
-        val cmd = "${resolveSu()} -c \"input keyevent 4\""
-        if (runCommand(ctx, cmd, 2500L) == null) {
-            AppLog.w(TAG, "input 返回键失败")
-            return false
-        }
-        return true
+        return false
     }
 
     /** 加入电池白名单 + 提升为 active 待机桶；每次握手成功都续期（命令幂等，防 OEM 重置） */
