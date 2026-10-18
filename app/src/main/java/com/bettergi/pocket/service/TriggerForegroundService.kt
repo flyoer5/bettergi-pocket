@@ -16,7 +16,6 @@ import com.bettergi.pocket.MainActivity
 import com.bettergi.pocket.R
 import com.bettergi.pocket.capture.CapturePermissionActivity
 import com.bettergi.pocket.capture.ScreenCaptureController
-import com.bettergi.pocket.feature.autopick.AutoPickFeature
 import com.bettergi.pocket.feature.autoskip.AutoSkipFeature
 import com.bettergi.pocket.feature.autoskip.OptionKeywords
 import com.bettergi.pocket.genshin.ForegroundWatcher
@@ -100,7 +99,6 @@ class TriggerForegroundService : Service() {
             settingsRepository = settingsRepository,
             captureController = captureController,
             features = listOf(
-                AutoPickFeature(),
                 AutoSkipFeature(
                     recognitionAssets,
                     overlayController,

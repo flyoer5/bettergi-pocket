@@ -30,7 +30,6 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
 import com.bettergi.pocket.R
-import com.bettergi.pocket.feature.autopick.AutoPickFeature
 import com.bettergi.pocket.feature.autoskip.AutoSkipEvents
 import com.bettergi.pocket.genshin.GenshinLaunchResult
 import com.bettergi.pocket.genshin.GenshinLauncher
@@ -98,7 +97,6 @@ class OverlayWindowController(
     private val hideTapIndicator = Runnable { tapIndicatorView?.visibility = View.GONE }
     private var tapIndicatorView: View? = null
     private var tapIndicatorParams: WindowManager.LayoutParams? = null
-    private var switchAutoPick: SwitchCompat? = null
     private var switchAutoLaunch: SwitchCompat? = null
     private var switchSnapEdge: SwitchCompat? = null
     private var launchHint: TextView? = null
@@ -138,7 +136,6 @@ class OverlayWindowController(
     private var rowQuickSkip: View? = null
     private var rowSmartOption: View? = null
     private var rowBlackScreen: View? = null
-    private var rowAutoPick: View? = null
     private var rowLaunch: View? = null
     private var autoSkipExtras: View? = null
     private var autoSkipChevron: ImageView? = null
@@ -176,7 +173,6 @@ class OverlayWindowController(
             switchBlackScreen?.isChecked = settings.blackScreenClickEnabled
             switchTapIndicator?.isChecked = settings.showTapIndicator
             switchExclamation?.isChecked = settings.exclamationClickEnabled
-            switchAutoPick?.isChecked = settings.autoPickEnabled
             switchAutoLaunch?.isChecked = settings.autoLaunchGenshinEnabled
             applyFeatureEnabled(settings)
             refreshLaunchHint()
@@ -202,7 +198,6 @@ class OverlayWindowController(
         val blackScreenSwitch = root.findViewById<SwitchCompat>(R.id.overlay_switch_black_screen)
         val tapIndicatorSwitch = root.findViewById<SwitchCompat>(R.id.overlay_switch_tap_indicator)
         val exclamationSwitch = root.findViewById<SwitchCompat>(R.id.overlay_switch_exclamation)
-        val autoPickSwitch = root.findViewById<SwitchCompat>(R.id.overlay_switch_auto_pick)
         val autoLaunchSwitch = root.findViewById<SwitchCompat>(R.id.overlay_switch_auto_launch)
         val snapEdgeSwitch = root.findViewById<SwitchCompat>(R.id.overlay_switch_snap_edge)
         val logToggle = root.findViewById<ImageButton>(R.id.overlay_log_toggle)
@@ -229,7 +224,6 @@ class OverlayWindowController(
         switchBlackScreen = blackScreenSwitch
         switchTapIndicator = tapIndicatorSwitch
         switchExclamation = exclamationSwitch
-        switchAutoPick = autoPickSwitch
         switchAutoLaunch = autoLaunchSwitch
         switchSnapEdge = snapEdgeSwitch
         launchHint = root.findViewById(R.id.overlay_auto_launch_hint)
@@ -250,12 +244,6 @@ class OverlayWindowController(
         rowTapIndicator = root.findViewById(R.id.overlay_row_tap_indicator)
         rowExclamation = root.findViewById(R.id.overlay_row_exclamation)
         rowLaunch = root.findViewById(R.id.overlay_row_launch)
-        rowAutoPick = root.findViewById<View>(R.id.overlay_row_auto_pick).also { row ->
-            row.visibility = if (AutoPickFeature.AVAILABLE) View.VISIBLE else View.GONE
-            if (!AutoPickFeature.AVAILABLE) {
-                settingsRepository.setAutoPickEnabled(false)
-            }
-        }
         autoSkipExtras = root.findViewById(R.id.overlay_auto_skip_extras)
         autoSkipChevron = root.findViewById(R.id.overlay_auto_skip_chevron)
         launchExtras = root.findViewById(R.id.overlay_launch_extras)
@@ -314,10 +302,6 @@ class OverlayWindowController(
         exclamationSwitch.setOnCheckedChangeListener { _, isChecked ->
             if (updatingUi) return@setOnCheckedChangeListener
             settingsRepository.setExclamationClickEnabled(isChecked)
-        }
-        autoPickSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (updatingUi) return@setOnCheckedChangeListener
-            settingsRepository.setAutoPickEnabled(isChecked)
         }
         autoLaunchSwitch.setOnCheckedChangeListener { _, isChecked ->
             if (updatingUi) return@setOnCheckedChangeListener
@@ -453,7 +437,6 @@ class OverlayWindowController(
         switchExclamation = null
         rowExclamation = null
         releaseTapIndicator()
-        switchAutoPick = null
         switchAutoLaunch = null
         switchSnapEdge = null
         launchHint = null
@@ -463,7 +446,6 @@ class OverlayWindowController(
         rowQuickSkip = null
         rowSmartOption = null
         rowBlackScreen = null
-        rowAutoPick = null
         rowLaunch = null
         autoSkipExtras = null
         autoSkipChevron = null
@@ -607,14 +589,12 @@ class OverlayWindowController(
         val shareOn = settings.screenShareEnabled
         val autoSkipOn = shareOn && settings.autoSkipEnabled
         switchAutoSkip?.isEnabled = shareOn
-        switchAutoPick?.isEnabled = shareOn
         switchQuickSkip?.isEnabled = autoSkipOn
         switchSmartOption?.isEnabled = autoSkipOn
         switchBlackScreen?.isEnabled = autoSkipOn
         switchTapIndicator?.isEnabled = shareOn
         switchExclamation?.isEnabled = autoSkipOn
         rowAutoSkip?.alpha = if (shareOn) 1f else 0.45f
-        rowAutoPick?.alpha = if (shareOn) 1f else 0.45f
         rowQuickSkip?.alpha = if (autoSkipOn) 1f else 0.45f
         rowSmartOption?.alpha = if (autoSkipOn) 1f else 0.45f
         rowBlackScreen?.alpha = if (autoSkipOn) 1f else 0.45f

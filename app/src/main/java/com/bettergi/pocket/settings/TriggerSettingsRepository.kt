@@ -39,10 +39,6 @@ class TriggerSettingsRepository(context: Context) {
         update { it.copy(screenShareEnabled = enabled) }
     }
 
-    fun setAutoPickEnabled(enabled: Boolean) {
-        update { it.copy(autoPickEnabled = enabled) }
-    }
-
     fun setAutoSkipEnabled(enabled: Boolean) {
         update { it.copy(autoSkipEnabled = enabled) }
     }
@@ -94,15 +90,9 @@ class TriggerSettingsRepository(context: Context) {
         update { it.copy(blackClickIntervalMs = ms.coerceIn(BLACK_CLICK_MIN, BLACK_CLICK_MAX)) }
     }
 
-    fun setPickClickInterval(ms: Int) {
-        update { it.copy(pickClickIntervalMs = ms.coerceIn(PICK_CLICK_MIN, PICK_CLICK_MAX)) }
-    }
-
-    /** 三项节奏恢复默认（500 / 1200 / 800） */
+    /** 两项节奏恢复默认（500 / 1200） */
     fun resetClickTempo() {
-        update {
-            it.copy(skipClickIntervalMs = 500, blackClickIntervalMs = 1200, pickClickIntervalMs = 800)
-        }
+        update { it.copy(skipClickIntervalMs = 500, blackClickIntervalMs = 1200) }
     }
 
 
@@ -117,7 +107,6 @@ class TriggerSettingsRepository(context: Context) {
             newValue = updated
             prefs.edit()
                 .putBoolean(KEY_SCREEN_SHARE, updated.screenShareEnabled)
-                .putBoolean(KEY_AUTO_PICK, updated.autoPickEnabled)
                 .putBoolean(KEY_AUTO_SKIP, updated.autoSkipEnabled)
                 .putBoolean(KEY_QUICK_SKIP, updated.quickSkipDialogueEnabled)
                 .putBoolean(KEY_AUTO_LAUNCH_GENSHIN, updated.autoLaunchGenshinEnabled)
@@ -130,7 +119,6 @@ class TriggerSettingsRepository(context: Context) {
                 .putFloat(KEY_QUICK_SKIP_Y, updated.quickSkipPositionY)
                 .putInt(KEY_SKIP_CLICK_MS, updated.skipClickIntervalMs)
                 .putInt(KEY_BLACK_CLICK_MS, updated.blackClickIntervalMs)
-                .putInt(KEY_PICK_CLICK_MS, updated.pickClickIntervalMs)
                 .apply()
         }
         val gen = generation
@@ -145,7 +133,6 @@ class TriggerSettingsRepository(context: Context) {
 
     private fun readFromPrefs(): TriggerSettings = TriggerSettings(
         screenShareEnabled = false,
-        autoPickEnabled = prefs.getBoolean(KEY_AUTO_PICK, false),
         autoSkipEnabled = prefs.getBoolean(KEY_AUTO_SKIP, false),
         quickSkipDialogueEnabled = prefs.getBoolean(KEY_QUICK_SKIP, true),
         autoLaunchGenshinEnabled = prefs.getBoolean(KEY_AUTO_LAUNCH_GENSHIN, false),
@@ -160,14 +147,11 @@ class TriggerSettingsRepository(context: Context) {
             .coerceIn(SKIP_CLICK_MIN, SKIP_CLICK_MAX),
         blackClickIntervalMs = prefs.getInt(KEY_BLACK_CLICK_MS, 1200)
             .coerceIn(BLACK_CLICK_MIN, BLACK_CLICK_MAX),
-        pickClickIntervalMs = prefs.getInt(KEY_PICK_CLICK_MS, 800)
-            .coerceIn(PICK_CLICK_MIN, PICK_CLICK_MAX),
     )
 
     private companion object {
         const val PREFS_NAME = "trigger_settings"
         const val KEY_SCREEN_SHARE = "screenShareEnabled"
-        const val KEY_AUTO_PICK = "autoPickEnabled"
         const val KEY_AUTO_SKIP = "autoSkipEnabled"
         const val KEY_QUICK_SKIP = "quickSkipDialogueEnabled"
         const val KEY_AUTO_LAUNCH_GENSHIN = "autoLaunchGenshinEnabled"
@@ -180,14 +164,11 @@ class TriggerSettingsRepository(context: Context) {
         const val KEY_QUICK_SKIP_Y = "quickSkipPositionY"
         const val KEY_SKIP_CLICK_MS = "skipClickIntervalMs"
         const val KEY_BLACK_CLICK_MS = "blackClickIntervalMs"
-        const val KEY_PICK_CLICK_MS = "pickClickIntervalMs"
 
         // 各节奏参数的合法区间（与界面滑块一致）
         const val SKIP_CLICK_MIN = 300
         const val SKIP_CLICK_MAX = 1500
         const val BLACK_CLICK_MIN = 500
         const val BLACK_CLICK_MAX = 3000
-        const val PICK_CLICK_MIN = 300
-        const val PICK_CLICK_MAX = 2000
     }
 }

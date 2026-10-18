@@ -10,12 +10,11 @@ import com.bettergi.pocket.R
 import com.bettergi.pocket.settings.TriggerSettingsRepository
 
 /**
- * 点击节奏面板：三段可调间隔（对话跳过 / 黑屏点击 / 自动拾取），拖动即生效。
+ * 点击节奏面板：两段可调间隔（对话跳过 / 黑屏点击），拖动即生效。
  *
  * 取值映射与 SeekBar max 严格对应，避免"界面能拖到 95%、实际被常量卡住"这类错位：
  *   skip : 300ms + progress(0..24) * 50ms  -> 300..1500
  *   black: 500ms + progress(0..25) * 100ms -> 500..3000
- *   pick : 300ms + progress(0..17) * 100ms -> 300..2000
  */
 class ClickTempoPanel(
     private val themedContext: Context,
@@ -28,10 +27,8 @@ class ClickTempoPanel(
     private var panelParams: WindowManager.LayoutParams? = null
     private var seekSkip: SeekBar? = null
     private var seekBlack: SeekBar? = null
-    private var seekPick: SeekBar? = null
     private var textSkip: TextView? = null
     private var textBlack: TextView? = null
-    private var textPick: TextView? = null
 
     val isVisible: Boolean get() = panelView != null
 
@@ -51,10 +48,8 @@ class ClickTempoPanel(
 
         seekSkip = panel.findViewById(R.id.ct_seek_skip)
         seekBlack = panel.findViewById(R.id.ct_seek_black)
-        seekPick = panel.findViewById(R.id.ct_seek_pick)
         textSkip = panel.findViewById(R.id.ct_text_skip)
         textBlack = panel.findViewById(R.id.ct_text_black)
-        textPick = panel.findViewById(R.id.ct_text_pick)
 
         DragGestureHelper(
             touchSlop = 0,
@@ -76,7 +71,6 @@ class ClickTempoPanel(
             val s = settingsRepository.get()
             render(SKIP_MIN, SKIP_STEP, s.skipClickIntervalMs, seekSkip, textSkip)
             render(BLACK_MIN, BLACK_STEP, s.blackClickIntervalMs, seekBlack, textBlack)
-            render(PICK_MIN, PICK_STEP, s.pickClickIntervalMs, seekPick, textPick)
         }
 
         val listener = object : SeekBar.OnSeekBarChangeListener {
@@ -93,11 +87,6 @@ class ClickTempoPanel(
                         textBlack?.text = "${v}ms"
                         settingsRepository.setBlackClickInterval(v)
                     }
-                    R.id.ct_seek_pick -> {
-                        val v = PICK_MIN + progress * PICK_STEP
-                        textPick?.text = "${v}ms"
-                        settingsRepository.setPickClickInterval(v)
-                    }
                 }
             }
 
@@ -107,12 +96,10 @@ class ClickTempoPanel(
         }
         seekSkip?.setOnSeekBarChangeListener(listener)
         seekBlack?.setOnSeekBarChangeListener(listener)
-        seekPick?.setOnSeekBarChangeListener(listener)
 
         val s = settingsRepository.get()
         render(SKIP_MIN, SKIP_STEP, s.skipClickIntervalMs, seekSkip, textSkip)
         render(BLACK_MIN, BLACK_STEP, s.blackClickIntervalMs, seekBlack, textBlack)
-        render(PICK_MIN, PICK_STEP, s.pickClickIntervalMs, seekPick, textPick)
 
         try {
             windowManager.addView(panel, lp)
@@ -132,10 +119,8 @@ class ClickTempoPanel(
         panelParams = null
         seekSkip = null
         seekBlack = null
-        seekPick = null
         textSkip = null
         textBlack = null
-        textPick = null
     }
 
     private fun render(min: Int, step: Int, valueMs: Int, seek: SeekBar?, label: TextView?) {
@@ -148,7 +133,5 @@ class ClickTempoPanel(
         const val SKIP_STEP = 50
         const val BLACK_MIN = 500
         const val BLACK_STEP = 100
-        const val PICK_MIN = 300
-        const val PICK_STEP = 100
     }
 }

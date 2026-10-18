@@ -2,7 +2,6 @@ package com.bettergi.pocket.settings
 
 data class TriggerSettings(
     val screenShareEnabled: Boolean,
-    val autoPickEnabled: Boolean,
     val autoSkipEnabled: Boolean,
     val quickSkipDialogueEnabled: Boolean,
     val autoLaunchGenshinEnabled: Boolean = false,
@@ -17,6 +16,4 @@ data class TriggerSettings(
     val skipClickIntervalMs: Int = 500,
     /** 黑屏转场点击间隔（ms） */
     val blackClickIntervalMs: Int = 1200,
-    /** 自动拾取点击间隔（ms） */
-    val pickClickIntervalMs: Int = 800,
 )
