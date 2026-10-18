@@ -164,6 +164,21 @@ class TriggerForegroundService : Service() {
                 requestingCapturePermission = false
                 settingsRepository.setScreenShareEnabled(false)
             }
+            else -> {
+                // START_STICKY 重启（进程被系统回收后 intent 为 null）或未知 action：
+                // 必须立刻回到前台，否则 Android 12+ 会在 5s 内抛
+                // ForegroundServiceDidNotStartInTimeException 把服务杀掉（表现为"助手莫名消失"）。
+                AppLog.w(TAG, "无 action 启动（可能是系统重启服务），恢复前台与悬浮窗")
+                startInForeground(sharing = captureController.isRunning())
+                overlayController.show()
+                val settings = settingsRepository.get()
+                if (settings.screenShareEnabled && !captureController.isRunning()) {
+                    // 共享标记还在但投影已随进程死亡失效：重新申请一次，失败会自动关闭开关
+                    requestCapturePermission()
+                } else if (captureController.isRunning()) {
+                    engine.start()
+                }
+            }
         }
         return START_STICKY
     }

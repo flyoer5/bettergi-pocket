@@ -13,6 +13,7 @@ import com.bettergi.pocket.settings.TriggerSettings
 import com.bettergi.pocket.trigger.FeatureTick
 import com.bettergi.pocket.trigger.TriggerFeature
 import com.bettergi.pocket.trigger.screenBottomCenter
+import kotlin.math.abs
 import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.Scalar
@@ -145,13 +146,17 @@ class AutoSkipFeature(
                 } ?: return
                 val target = decision.region
                 val (topX, topY) = target.centerOnNativeCapture()
+                // 确认基准必须与 CONFIRMING 的比较对象同源：
+                // 决策结果可能是 OCR 文本行（智能选项路径），而确认阶段比较的是 ChatIcon 命中，
+                // 两者几何不同（文本在图标右侧）。取与目标同排最近的 ChatIcon 作为锚点。
+                val anchor = hits.minByOrNull { abs(it.y - target.y) }
                 events?.onChatIconsRecognized(hits.size, topX, topY)
 
                 Log.i(TAG, "click option at $topX,$topY")
                 actions.emit(ClickAction(topX, topY))
                 events?.onChatIconClicked(topX, topY)
-                clickedOptionX = target.x
-                clickedOptionY = target.y
+                clickedOptionX = anchor?.x ?: target.x
+                clickedOptionY = anchor?.y ?: target.y
                 clickedAtMs = now
                 state = State.CONFIRMING
             }
@@ -167,7 +172,12 @@ class AutoSkipFeature(
                 val hits = content.findMulti(chatIcon)
                 val top = selectTopChatIcon(hits)
 
-                val changed = top == null || hits.none { it.y == clickedOptionY && it.x == clickedOptionX }
+                // 判定"选项是否还在原处"：容差比较（同模板同空间，2~3px 抖动正常，给 32px 余量）
+                val stillThere = top != null && hits.any {
+                    abs(it.x - clickedOptionX) <= OPTION_ANCHOR_TOLERANCE_PX &&
+                        abs(it.y - clickedOptionY) <= OPTION_ANCHOR_TOLERANCE_PX
+                }
+                val changed = !stillThere
                 if (changed) {
                     events?.onAutoSkipLog("选项已变化，点击生效")
                     state = State.IN_DIALOG
@@ -205,9 +215,11 @@ class AutoSkipFeature(
             val black = Core.countNonZero(mask).toDouble()
             val rate = black / (roi.cols() * roi.rows())
             if (rate >= BLACK_RATE_MIN && rate < BLACK_RATE_MAX) {
-                Log.i(TAG, "black transition detected, rate=$rate, click center")
-                events?.onBlackScreenClicked(w / 2, h / 2)
-                actions.emit(ClickAction(w / 2, h / 2))
+                // 坐标系必须换算回原生捕获（w/h 是 ≤1920 的缩放图尺寸，直接当屏幕坐标会点偏）
+                val (cx, cy) = content.captureRectArea.centerOnNativeCapture()
+                Log.i(TAG, "black transition detected, rate=$rate, click center $cx,$cy")
+                events?.onBlackScreenClicked(cx, cy)
+                actions.emit(ClickAction(cx, cy))
                 lastBlackClickMs = now
             }
         } finally {
@@ -311,6 +323,9 @@ class AutoSkipFeature(
 
         /** 相邻选项行 Y 间距上限（1080p 基准，对齐 PC 的 150）。 */
         private const val OPTION_MAX_Y_GAP = 150
+
+        /** 确认阶段锚点匹配容差（1080p 基准像素） */
+        private const val OPTION_ANCHOR_TOLERANCE_PX = 32
         private const val BLACK_CLICK_INTERVAL_MS = 1200L
         private const val BLACK_RATE_MIN = 0.5
         private const val BLACK_RATE_MAX = 0.98999

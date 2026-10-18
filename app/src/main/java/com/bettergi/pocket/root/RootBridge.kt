@@ -44,6 +44,10 @@ object RootBridge {
     @Volatile
     private var helperProcess: Process? = null
 
+    /** 最近一次残留清理线程（stop 侧发起，start 侧等待它结束，防误杀新 helper） */
+    @Volatile
+    private var lastKillThread: Thread? = null
+
     private var appContext: Context? = null
     @Volatile
     private var suPath: String? = null
@@ -81,19 +85,11 @@ object RootBridge {
         File(sockPath).delete()
 
         val su = resolveSu()
-        // 清理可能残留的旧 helper：避免文件被占用（ETXTBSY）与多实例争用 socket。
-        // 注意不能用 pkill -f bgroot：执行它的 shell 命令行本身含 "bgroot" 会被自杀误杀，导致清理从未真正生效。
-        // 改为按 /proc/*/comm 精确匹配进程名 bgroot 逐个 kill。
-        // 异步执行 + 短暂等待：全 /proc 扫描可能耗时数秒, 不阻塞连接握手（加快"打开即连"）
-        val killJob = Thread({
-            runCommand(
-                ctx,
-                "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done; sleep 0.2'",
-                3000L,
-            )
-        }, "bg-root-kill-stale").apply { isDaemon = true }
-        killJob.start()
-        killJob.join(300L)  // 最多等 300ms, 没清完也不阻塞连接
+        // 清理残留 helper 由 cleanupResources() 统一处理（它已起后台 kill 线程）。
+        // 这里必须等它结束再启动新 helper：否则上一轮 kill 线程可能在几秒后才执行，
+        // 正好杀掉刚握手成功的新 helper，表现为"连上就断"的重连风暴。
+        // 等不到也不阻塞启动（超过 1.2s 属于异常慢，继续走后续流程）。
+        waitPreviousKill()
 
         val cmd = "$su -c \"$helper --server --sock $sockPath --uid ${android.os.Process.myUid()} --app-pid ${android.os.Process.myPid()}\""
         val process = try {
@@ -325,16 +321,29 @@ object RootBridge {
         val su = suPath
         val ctx = appContext
         if (su != null && ctx != null) {
-            Thread({
+            val t = Thread({
                 runCommand(
                     ctx,
                     "$su -c 'for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm 2>/dev/null)\" = bgroot ] && kill -9 \${p#/proc/} 2>/dev/null; done'",
                     2000L,
                 )
-            }, "bg-root-kill-stale").apply { isDaemon = true }.start()
+            }, "bg-root-kill-stale").apply { isDaemon = true }
+            lastKillThread = t
+            t.start()
         }
         connection = null
         helperProcess = null
+    }
+
+    /** 等待上一轮残留清理线程结束（最多 1.2s），避免它误杀刚启动的新 helper。 */
+    private fun waitPreviousKill() {
+        val t = lastKillThread ?: return
+        if (!t.isAlive) return
+        try {
+            t.join(1200L)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
     }
 
     /** 连接意外断开：标记并调度自动重连（有限次数，主动 stop 不重连）。 */

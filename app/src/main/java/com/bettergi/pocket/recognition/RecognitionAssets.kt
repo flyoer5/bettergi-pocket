@@ -33,15 +33,14 @@ class RecognitionAssets(
             insertionOrder.addLast(key)
             while (insertionOrder.size > MAX_CACHE_ENTRIES) {
                 val oldest = insertionOrder.removeFirst()
-                cache.remove(oldest)
+                cache.remove(oldest)?.let(::releaseObject)
             }
         }
         return loaded
     }
 
     /** 释放全部缓存（服务停止时调用，释放 OpenCV native Mat）。 */
-    fun clear() {
-        cache.clear()
+    fun clear() {        cache.clear()
         jsonCache.clear()
         synchronized(insertionOrder) {
             insertionOrder.clear()
@@ -70,6 +69,25 @@ class RecognitionAssets(
     }
 
     private fun jsonPath(taskName: String): String = "recognition/$taskName/Recognition.json"
+
+    /**
+     * 淘汰条目时主动释放模板 Mat 的 native 内存。
+     * 只从 Map 移除的话 native 内存要等 GC 才归还；反复换分辨率/长时间运行会堆积。
+     * 仅在淘汰路径调用（发生在识别线程内，不会与正在进行的匹配竞争）；
+     * clear() 不逐个释放，因为停服务时识别线程可能仍在使用。
+     */
+    private fun releaseObject(obj: RecognitionObject) {
+        try {
+            obj.templateImageMat?.release()
+        } catch (_: Throwable) {
+        }
+        try {
+            obj.templateImageGreyMat?.release()
+        } catch (_: Throwable) {
+        }
+        obj.templateImageMat = null
+        obj.templateImageGreyMat = null
+    }
 
     private data class CacheKey(
         val taskName: String,

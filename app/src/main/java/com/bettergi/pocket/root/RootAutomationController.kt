@@ -30,8 +30,12 @@ class RootAutomationController(
             is ClickAction -> {
                 // 点击位置命中悬浮窗/日志窗时临时穿透，避免注入打在悬浮窗上导致游戏无响应
                 val passthrough = overlay.prepareClickPassthrough(action.x, action.y)
-                val ok = bridge.inputTap(action.x, action.y)
-                if (passthrough) overlay.restoreClickPassthrough()
+                val ok = try {
+                    bridge.inputTap(action.x, action.y)
+                } finally {
+                    // 必须 finally 恢复：注入抛异常时若不恢复，悬浮窗会永久处于点击穿透状态（用户点不动界面）
+                    if (passthrough) overlay.restoreClickPassthrough()
+                }
                 if (ok) {
                     overlay.flashTap(action.x, action.y)
                 } else {

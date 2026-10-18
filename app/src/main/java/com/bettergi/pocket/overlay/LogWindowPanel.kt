@@ -308,10 +308,26 @@ class LogWindowPanel(
         val handleLp = logHandleParams ?: return
         val handle = logHandleView ?: return
         val screen = screenSize()
-        val width = if (handle.width > 0) handle.width else dp(LOG_WIDTH_DP)
+        val handleW = if (handle.width > 0) handle.width else dp(LOG_WIDTH_DP)
+        // body 可能被用户拉得比 handle 更宽：钳制要按两者最大宽度算，否则右侧会出屏
+        val bodyW = logBodyView?.width?.takeIf { it > 0 } ?: handleW
+        val width = maxOf(handleW, bodyW)
         val handleHeight = if (handle.height > 0) handle.height else dp(28)
-        val bodyHeight = logBodyView?.height?.takeIf { it > 0 } ?: dp(120)
+        var bodyHeight = logBodyView?.height?.takeIf { it > 0 } ?: dp(120)
         val minY = 0
+        // body 高度也钳制：窗口高度 + 标题行不能超过屏幕，否则底部内容永远看不到
+        val maxBodyHeight = (screen.second - handleHeight - dp(8)).coerceAtLeast(dp(80))
+        if (bodyHeight > maxBodyHeight) {
+            bodyHeight = maxBodyHeight
+            val bodyLp = logBodyParams
+            if (bodyLp != null && bodyLp.height != maxBodyHeight) {
+                bodyLp.height = maxBodyHeight
+                try {
+                    windowManager.updateViewLayout(logBodyView, bodyLp)
+                } catch (_: Throwable) {
+                }
+            }
+        }
         handleLp.x = handleLp.x.coerceIn(0, (screen.first - width).coerceAtLeast(0))
         handleLp.y = handleLp.y.coerceIn(
             minY,

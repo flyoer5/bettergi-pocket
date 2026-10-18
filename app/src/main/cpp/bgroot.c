@@ -42,6 +42,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -84,21 +85,91 @@ static void on_signal(int sig) {
     running = 0;
 }
 
+/**
+ * 执行 shell 命令并抓取标准输出（最多 out_sz-1 字节，保证 NUL 结尾）。
+ *
+ * 为什么不用 popen：glibc 的 popen 硬编码 "/bin/sh"，而 Android 只有 /system/bin/sh，
+ * 没有 /bin 目录 → popen 子进程 exec 失败（退出码 127），调用方读到的永远是空输出。
+ * 这会让 FG / PID / KEEPALIVE / BACK / wm size 这些功能全部"静默失效"（不报错、返回空）。
+ *
+ * @return 子进程退出码；fork/pipe 失败返回 -1
+ */
+static int shell_capture(const char *cmd, char *out, size_t out_sz) {
+    /* out 传 NULL / 0 表示"只要退出码，不要输出"：内部用临时缓冲接收 */
+    char local[256];
+    if (out == NULL || out_sz == 0) {
+        out = local;
+        out_sz = sizeof(local);
+    }
+    out[0] = '\0';
+
+    int fds[2];
+    if (pipe(fds) != 0) return -1;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        /* 子进程：stdout -> pipe，stderr -> /dev/null */
+        close(fds[0]);
+        if (dup2(fds[1], STDOUT_FILENO) < 0) _exit(127);
+        close(fds[1]);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        /* 依次尝试 Android 上真实存在的 shell（含 Magisk 自带 busybox） */
+        static const char *shells[] = {
+            "/system/bin/sh",
+            "/bin/sh",
+            "/data/adb/magisk/busybox",
+            NULL,
+        };
+        for (int i = 0; shells[i] != NULL; i++) {
+            execl(shells[i], "sh", "-c", cmd, (char *)NULL);
+        }
+        _exit(127);
+    }
+
+    close(fds[1]);
+    size_t used = 0;
+    for (;;) {
+        ssize_t n = read(fds[0], out + used, out_sz - 1 - used);
+        if (n <= 0) break;
+        used += (size_t)n;
+        if (used >= out_sz - 1) break;
+    }
+    out[used] = '\0';
+    /* 先关读端再 waitpid：输出超过缓冲时子进程写管道会拿到 EPIPE 立即退出，不会死等 */
+    close(fds[0]);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+/** 执行命令并丢弃输出 */
+static void shell_run(const char *cmd) {
+    char sink[128];
+    shell_capture(cmd, sink, sizeof(sink));
+}
+
 /* 从 wm size 探测屏幕尺寸；成功返回 1 */
 static int detect_screen(void) {
-    FILE *p = popen("wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -1", "r");
-    if (!p) return 0;
-    char buf[64];
-    int w = 0, h = 0;
-    if (fgets(buf, sizeof(buf), p)) {
-        if (sscanf(buf, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
-            scr_w = w;
-            scr_h = h;
-            pclose(p);
-            return 1;
-        }
+    char buf[128];
+    if (shell_capture("wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -1", buf, sizeof(buf)) != 0) {
+        return 0;
     }
-    pclose(p);
+    int w = 0, h = 0;
+    if (sscanf(buf, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+        scr_w = w;
+        scr_h = h;
+        return 1;
+    }
     return 0;
 }
 
@@ -234,13 +305,16 @@ static int valid_pkg(const char *s) {
 /* 解析 dumpsys 里的前台 ActivityRecord，取包名；找不到置空 */
 static void query_foreground(char *out, size_t out_sz) {
     out[0] = '\0';
-    FILE *p = popen(
-        "dumpsys activity activities 2>/dev/null | "
-        "grep -m1 -E 'topResumedActivity|mResumedActivity|mFocusedApp' ",
-        "r");
-    if (!p) return;
-    char buf[1024];
-    while (fgets(buf, sizeof(buf), p)) {
+    char dump[1024];
+    if (shell_capture(
+            "dumpsys activity activities 2>/dev/null | "
+            "grep -m1 -E 'topResumedActivity|mResumedActivity|mFocusedApp'",
+            dump, sizeof(dump)) != 0 && dump[0] == '\0') {
+        return;
+    }
+    /* 按行扫描（grep -m1 只给一行，但保留循环便于兼容不同 ROM 输出） */
+    char *save = NULL;
+    for (char *buf = strtok_r(dump, "\n", &save); buf != NULL; buf = strtok_r(NULL, "\n", &save)) {
         char *start = strchr(buf, '{');
         if (!start) continue;
         char *mark = strstr(buf, " u0 ");
@@ -256,7 +330,6 @@ static void query_foreground(char *out, size_t out_sz) {
             break;
         }
     }
-    pclose(p);
 }
 
 /* 处理一行指令；返回 1 表示 QUIT */
@@ -297,13 +370,9 @@ static int handle_line(const char *line, char *resp, size_t resp_sz) {
         if (sscanf(line, "PID %127s", pkg) == 1 && valid_pkg(pkg)) {
             char cmd[256];
             snprintf(cmd, sizeof(cmd), "pidof %s 2>/dev/null", pkg);
-            int pid = 0;
-            FILE *p = popen(cmd, "r");
-            if (p) {
-                char buf[64];
-                if (fgets(buf, sizeof(buf), p)) pid = atoi(buf);
-                pclose(p);
-            }
+            char buf[64] = "";
+            shell_capture(cmd, buf, sizeof(buf));
+            int pid = buf[0] ? atoi(buf) : 0;
             snprintf(resp, resp_sz, "OK %d\n", pid);
         } else {
             snprintf(resp, resp_sz, "ERR bad package\n");
@@ -315,20 +384,10 @@ static int handle_line(const char *line, char *resp, size_t resp_sz) {
         if (sscanf(line, "KEEPALIVE %127s", pkg) == 1 && valid_pkg(pkg)) {
             char cmd[320];
             int ok = 0;
-            snprintf(cmd, sizeof(cmd), "dumpsys deviceidle whitelist +%s >/dev/null 2>&1", pkg);
-            FILE *p1 = popen(cmd, "r");
-            if (p1) {
-                ok |= (pclose(p1) == 0) ? 0 : 1;
-            } else {
-                ok = 1;
-            }
-            snprintf(cmd, sizeof(cmd), "am set-standby-bucket %s active >/dev/null 2>&1", pkg);
-            FILE *p2 = popen(cmd, "r");
-            if (p2) {
-                ok |= (pclose(p2) == 0) ? 0 : 1;
-            } else {
-                ok = 1;
-            }
+            snprintf(cmd, sizeof(cmd), "dumpsys deviceidle whitelist +%s", pkg);
+            if (shell_capture(cmd, NULL, 0) != 0) ok = 1;   /* 只看退出码，输出丢弃 */
+            snprintf(cmd, sizeof(cmd), "am set-standby-bucket %s active", pkg);
+            if (shell_capture(cmd, NULL, 0) != 0) ok = 1;
             if (ok == 0) {
                 snprintf(resp, resp_sz, "OK keepalive\n");
             } else {
@@ -340,8 +399,7 @@ static int handle_line(const char *line, char *resp, size_t resp_sz) {
         return 0;
     }
     if (strncmp(line, "BACK", 4) == 0) {
-        FILE *kp = popen("input keyevent 4 2>/dev/null", "r");
-        if (kp) pclose(kp);
+        shell_run("input keyevent 4 2>/dev/null");
         snprintf(resp, resp_sz, "OK back\n");
         return 0;
     }
@@ -383,7 +441,13 @@ static int run_server(const char *sock_path, int allow_uid) {
     /* 把 socket 文件所有权让渡给本 app：Unix socket connect 需要文件写权限，
        否则 app（非 root）对 root:0600 的文件无法连接（EACCES） */
     if (allow_uid > 0) {
-        chown(sock_path, allow_uid, allow_uid);
+        /* chown 失败 = app 连不上（socket 仍是 root:0600）→ 必须显式失败，别留个静默不可用的服务 */
+        if (chown(sock_path, allow_uid, allow_uid) != 0) {
+            fprintf(stderr, "ERR chown %s -> uid %d: %s\n", sock_path, allow_uid, strerror(errno));
+            close(sfd);
+            unlink(sock_path);
+            return 2;
+        }
     }
     if (listen(sfd, 4) < 0) {
         fprintf(stderr, "ERR listen: %s\n", strerror(errno));
@@ -427,13 +491,25 @@ static int run_server(const char *sock_path, int allow_uid) {
                     continue;
                 }
             } else {
-                fprintf(stderr, "peercred failed: %s (accepting anyway)\n", strerror(errno));
+                /* 取不到对端凭据视为不可信：socket 文件虽已 0600 + chown 给本 app,
+                 * 但校验失败时仍按拒绝处理, 不放行任何未验证连接 */
+                fprintf(stderr, "reject connection: peercred failed: %s\n", strerror(errno));
+                close(cfd);
+                continue;
             }
         }
         char line[MAX_LINE];
         size_t used = 0;
         int quit = 0;
         for (;;) {
+            if (used >= sizeof(line) - 1) {
+                /* 单行超长：协议里最长指令不足 64B，达到缓冲区上限说明流已错乱。
+                 * 以前这里 read(..., 0) 返回 0 被当成 EOF 静默断开；现在明确回错误再断开。 */
+                static const char too_long[] = "ERR line too long\n";
+                (void)!write(cfd, too_long, sizeof(too_long) - 1);
+                fprintf(stderr, "line too long, closing connection\n");
+                break;
+            }
             ssize_t n = read(cfd, line + used, sizeof(line) - used - 1);
             if (n <= 0) break;
             used += (size_t)n;
