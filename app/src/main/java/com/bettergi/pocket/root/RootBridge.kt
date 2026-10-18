@@ -30,6 +30,12 @@ object RootBridge {
     private const val RECONNECT_DELAY_MS = 2000L
     private const val MAX_RECONNECT_ATTEMPTS = 5
 
+    /** 持久 su shell 的完成标记前缀（形如 __BGD_12__，用于统计积压） */
+    private const val SHELL_SENTINEL = "__BGD_"
+    private val SHELL_SENTINEL_RE = Regex("__BGD_(\\d+)__")
+    /** 允许的在途命令数上限；超过说明 shell 卡住（如 input 被阻塞），需要重建 */
+    private const val SHELL_MAX_PENDING = 3
+
     @Volatile
     private var running = false
     /** 连接对象：socket + 输出流 + 读缓冲，整体替换避免撕裂读 */
@@ -47,6 +53,24 @@ object RootBridge {
     /** 最近一次残留清理线程（stop 侧发起，start 侧等待它结束，防误杀新 helper） */
     @Volatile
     private var lastKillThread: Thread? = null
+
+    /**
+     * 持久 root shell 会话：常驻一个 `su -c sh`，点击时只往 stdin 写一行。
+     * 相比每次 spawn sh+su（实测 100~300ms），写入耗时约毫秒级，自动对话明显更跟手。
+     * 单 sh 顺序执行，天然保证点击顺序。
+     */
+    private class ShellSession(val process: Process, val stdin: OutputStream) {
+        @Volatile var alive = true
+        @Volatile var written = 0
+        @Volatile var completed = 0
+    }
+
+    @Volatile
+    private var shell: ShellSession? = null
+
+    /** stop() 后禁止再建 shell：否则退出瞬间仍在排队的点击会把 root 会话重新拉起来 */
+    @Volatile
+    private var shellAllowed = true
 
     private var appContext: Context? = null
     @Volatile
@@ -73,6 +97,7 @@ object RootBridge {
     @Synchronized
     fun start(): Boolean {
         val ctx = appContext ?: return false
+        shellAllowed = true
         cleanupResources()
 
         val dir = File(ctx.filesDir, "root")
@@ -252,6 +277,8 @@ object RootBridge {
      */
     fun inputTap(x: Int, y: Int): Boolean {
         val ctx = appContext ?: return false
+        if (execInShell("input tap $x $y")) return true
+        // 回退：一次性执行（含退出码校验）
         val cmd = "${resolveSu()} -c \"input tap $x $y\""
         if (runCommand(ctx, cmd, 2500L) != null) return true
         AppLog.w(TAG, "input 注入失败 ($x,$y)，尝试 uinput 回退")
@@ -268,6 +295,7 @@ object RootBridge {
     /** 返回键注入：input 命令优先，socket BACK 仅作回退。 */
     fun inputBack(): Boolean {
         val ctx = appContext ?: return false
+        if (execInShell("input keyevent 4")) return true
         val cmd = "${resolveSu()} -c \"input keyevent 4\""
         if (runCommand(ctx, cmd, 2500L) != null) return true
         AppLog.w(TAG, "input 返回键失败，尝试 socket BACK 回退")
@@ -295,6 +323,8 @@ object RootBridge {
         if (running) AppLog.i(TAG, "root 后端停止")
         userStopped = true
         reconnectPending.set(false)
+        shellAllowed = false
+        closeShell()
         cleanupResources()
     }
 
@@ -390,6 +420,80 @@ object RootBridge {
             thread.isDaemon = true
             thread.start()
         }
+    }
+
+    /**
+     * 通过持久 root shell 执行一条命令（fire-and-forget，写在 stdin 即返回）。
+     * 失败（shell 未起来/已死/积压过多/写失败）返回 false，由调用方回退到一次性执行。
+     */
+    private fun execInShell(cmd: String): Boolean {
+        val s = ensureShell() ?: return false
+        if (!s.process.isAlive || !s.alive) return false
+        if (s.written - s.completed > SHELL_MAX_PENDING) {
+            // shell 卡在某个命令上（如 input 被系统阻塞）：重建会话，本条走回退路径
+            AppLog.w(TAG, "持久 shell 积压 ${s.written - s.completed} 条，重建会话")
+            closeShell()
+            return false
+        }
+        return try {
+            val n = ++s.written
+            s.stdin.write("$cmd; echo ${SHELL_SENTINEL}${n}__\n".toByteArray(Charsets.UTF_8))
+            s.stdin.flush()
+            true
+        } catch (e: Exception) {
+            AppLog.w(TAG, "写持久 shell 失败: ${e.message}")
+            closeShell()
+            false
+        }
+    }
+
+    /** 取（或重建）持久 root shell。仅在首个可用 su 路径上尝试一次，失败即放弃。 */
+    @Synchronized
+    private fun ensureShell(): ShellSession? {
+        if (!shellAllowed) return null
+        shell?.let { if (it.process.isAlive && it.alive) return it }
+        closeShell()
+        val su = resolveSu()
+        return try {
+            val p = ProcessBuilder(su, "-c", "sh").redirectErrorStream(true).start()
+            val s = ShellSession(p, p.outputStream)
+            Thread({
+                try {
+                    p.inputStream.bufferedReader().useLines { lines ->
+                        for (line in lines) {
+                            SHELL_SENTINEL_RE.find(line)?.let { m ->
+                                m.groupValues[1].toIntOrNull()?.let { s.completed = it }
+                            }
+                        }
+                    }
+                } catch (_: Throwable) {
+                    // shell 退出/读流异常：置不可用，下次调用自动重建
+                } finally {
+                    s.alive = false
+                }
+            }, "bg-su-reader").apply { isDaemon = true }.start()
+            shell = s
+            AppLog.i(TAG, "持久 root shell 已建立")
+            s
+        } catch (e: Exception) {
+            AppLog.w(TAG, "持久 root shell 启动失败: ${e.message}")
+            null
+        }
+    }
+
+    private fun closeShell() {
+        val s = shell ?: return
+        shell = null
+        try {
+            s.stdin.write("exit\n".toByteArray(Charsets.UTF_8))
+            s.stdin.flush()
+        } catch (_: Throwable) {
+        }
+        try {
+            s.process.destroy()
+        } catch (_: Throwable) {
+        }
+        s.alive = false
     }
 
     /**
