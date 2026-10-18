@@ -101,11 +101,22 @@ class AutoSkipFeature(
                 events?.onTalkHistoryMatched()
 
                 if (settings.quickSkipDialogueEnabled) {
-                    val (skipX, skipY) = if (settings.quickSkipCustomPosition) {
-                        (tick.screenWidth * settings.quickSkipPositionX).toInt().coerceIn(0, tick.screenWidth) to
-                            (tick.screenHeight * settings.quickSkipPositionY).toInt().coerceIn(0, tick.screenHeight)
-                    } else {
-                        screenBottomCenter(tick.screenWidth, tick.screenHeight)
+                    // 固定点（原版行为）始终保留；开启自定义后是"叠加"而非"替换",
+                    // 同一拍依次点两处，覆盖不同界面下的可点区域。两点过近则合并为一次，
+                    // 避免同一位置连点两下被系统当成双击、也避免重复注入。
+                    val (fixedX, fixedY) = screenBottomCenter(tick.screenWidth, tick.screenHeight)
+                    val points = ArrayList<Pair<Int, Int>>(2)
+                    points.add(fixedX to fixedY)
+                    if (settings.quickSkipCustomPosition) {
+                        val cx = (tick.screenWidth * settings.quickSkipPositionX).toInt()
+                            .coerceIn(0, tick.screenWidth)
+                        val cy = (tick.screenHeight * settings.quickSkipPositionY).toInt()
+                            .coerceIn(0, tick.screenHeight)
+                        val dx = cx - fixedX
+                        val dy = cy - fixedY
+                        if (dx * dx + dy * dy >= QUICK_SKIP_MIN_SEPARATION_PX * QUICK_SKIP_MIN_SEPARATION_PX) {
+                            points.add(cx to cy)
+                        }
                     }
                     val skipNow = System.currentTimeMillis()
                     // 点击节流：避免每帧狂点干扰手动操作（500ms 一次足够逐行跳过对话）
@@ -113,9 +124,11 @@ class AutoSkipFeature(
                         lastSkipClickMs = skipNow
                         if (skipNow - lastSkipLogMs >= SKIP_LOG_INTERVAL_MS) {
                             lastSkipLogMs = skipNow
-                            events?.onAutoSkipLog("点击跳过 ($skipX, $skipY)")
+                            events?.onAutoSkipLog(
+                                "点击跳过 " + points.joinToString(" / ") { "(${it.first}, ${it.second})" },
+                            )
                         }
-                        actions.emit(ClickAction(skipX, skipY))
+                        points.forEach { (x, y) -> actions.emit(ClickAction(x, y)) }
                     }
                 }
 
@@ -331,6 +344,9 @@ class AutoSkipFeature(
 
         /** 确认阶段锚点匹配容差（1080p 基准像素） */
         private const val OPTION_ANCHOR_TOLERANCE_PX = 32
+
+        /** 固定点与自定义点的最小间距；小于此值视为同一位置，只点一次 */
+        private const val QUICK_SKIP_MIN_SEPARATION_PX = 32
         private const val BLACK_CLICK_INTERVAL_MS = 1200L
         private const val BLACK_RATE_MIN = 0.5
         private const val BLACK_RATE_MAX = 0.98999

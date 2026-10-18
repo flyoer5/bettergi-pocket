@@ -75,8 +75,8 @@ class TriggerSettingsRepository(context: Context) {
         update {
             it.copy(
                 quickSkipCustomPosition = true,
-                quickSkipPositionX = x.coerceIn(0.05f, 0.95f),
-                quickSkipPositionY = y.coerceIn(0.05f, 0.95f),
+                quickSkipPositionX = x.coerceIn(0.05f, 0.99f),
+                quickSkipPositionY = y.coerceIn(0.05f, 0.99f),
             )
         }
     }

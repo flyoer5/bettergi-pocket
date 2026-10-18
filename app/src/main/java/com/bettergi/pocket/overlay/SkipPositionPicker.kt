@@ -44,8 +44,8 @@ class SkipPositionPicker(
         if (pickerView != null) return
         val screen = screenSize()
         val settings = settingsRepository.get()
-        tempX = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionX else 0.5f).coerceIn(0.05f, 0.95f)
-        tempY = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionY else 0.99f).coerceIn(0.05f, 0.95f)
+        tempX = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionX else 0.5f).coerceIn(0.05f, 0.99f)
+        tempY = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionY else 0.99f).coerceIn(0.05f, 0.99f)
 
         val container = FrameLayout(themedContext)
         val crosshair = View(themedContext).apply {
@@ -56,8 +56,8 @@ class SkipPositionPicker(
         crosshair.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                    tempX = (e.rawX / screen.first).coerceIn(0.05f, 0.95f)
-                    tempY = (e.rawY / screen.second).coerceIn(0.05f, 0.95f)
+                    tempX = (e.rawX / screen.first).coerceIn(0.05f, 0.99f)
+                    tempY = (e.rawY / screen.second).coerceIn(0.05f, 0.99f)
                     syncControls()
                     true
                 }

@@ -154,7 +154,8 @@ class OverlayWindowController(
             switchAutoSkip?.isChecked = settings.autoSkipEnabled
             switchQuickSkip?.isChecked = settings.quickSkipDialogueEnabled
             spStatus?.text = if (settings.quickSkipCustomPosition) {
-                "自定义 ${(settings.quickSkipPositionX * 100).toInt()}%,${(settings.quickSkipPositionY * 100).toInt()}%"
+                "自定义 ${(settings.quickSkipPositionX * 100).toInt()}%,${(settings.quickSkipPositionY * 100).toInt()}%" +
+                    "（叠加默认点）"
             } else {
                 "默认（屏幕底部中央）"
             }
