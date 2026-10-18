@@ -82,7 +82,27 @@ class TriggerSettingsRepository(context: Context) {
     }
 
     fun resetQuickSkipPosition() {
+        // 仅关闭附加点，保留已保存坐标：再次打开取点器可直接沿用上次位置
         update { it.copy(quickSkipCustomPosition = false) }
+    }
+
+    fun setSkipClickInterval(ms: Int) {
+        update { it.copy(skipClickIntervalMs = ms.coerceIn(SKIP_CLICK_MIN, SKIP_CLICK_MAX)) }
+    }
+
+    fun setBlackClickInterval(ms: Int) {
+        update { it.copy(blackClickIntervalMs = ms.coerceIn(BLACK_CLICK_MIN, BLACK_CLICK_MAX)) }
+    }
+
+    fun setPickClickInterval(ms: Int) {
+        update { it.copy(pickClickIntervalMs = ms.coerceIn(PICK_CLICK_MIN, PICK_CLICK_MAX)) }
+    }
+
+    /** 三项节奏恢复默认（500 / 1200 / 800） */
+    fun resetClickTempo() {
+        update {
+            it.copy(skipClickIntervalMs = 500, blackClickIntervalMs = 1200, pickClickIntervalMs = 800)
+        }
     }
 
 
@@ -108,6 +128,9 @@ class TriggerSettingsRepository(context: Context) {
                 .putBoolean(KEY_QUICK_SKIP_CUSTOM, updated.quickSkipCustomPosition)
                 .putFloat(KEY_QUICK_SKIP_X, updated.quickSkipPositionX)
                 .putFloat(KEY_QUICK_SKIP_Y, updated.quickSkipPositionY)
+                .putInt(KEY_SKIP_CLICK_MS, updated.skipClickIntervalMs)
+                .putInt(KEY_BLACK_CLICK_MS, updated.blackClickIntervalMs)
+                .putInt(KEY_PICK_CLICK_MS, updated.pickClickIntervalMs)
                 .apply()
         }
         val gen = generation
@@ -133,6 +156,12 @@ class TriggerSettingsRepository(context: Context) {
         quickSkipCustomPosition = prefs.getBoolean(KEY_QUICK_SKIP_CUSTOM, false),
         quickSkipPositionX = prefs.getFloat(KEY_QUICK_SKIP_X, 0.5f),
         quickSkipPositionY = prefs.getFloat(KEY_QUICK_SKIP_Y, 0.99f),
+        skipClickIntervalMs = prefs.getInt(KEY_SKIP_CLICK_MS, 500)
+            .coerceIn(SKIP_CLICK_MIN, SKIP_CLICK_MAX),
+        blackClickIntervalMs = prefs.getInt(KEY_BLACK_CLICK_MS, 1200)
+            .coerceIn(BLACK_CLICK_MIN, BLACK_CLICK_MAX),
+        pickClickIntervalMs = prefs.getInt(KEY_PICK_CLICK_MS, 800)
+            .coerceIn(PICK_CLICK_MIN, PICK_CLICK_MAX),
     )
 
     private companion object {
@@ -149,5 +178,16 @@ class TriggerSettingsRepository(context: Context) {
         const val KEY_QUICK_SKIP_CUSTOM = "quickSkipCustomPosition"
         const val KEY_QUICK_SKIP_X = "quickSkipPositionX"
         const val KEY_QUICK_SKIP_Y = "quickSkipPositionY"
+        const val KEY_SKIP_CLICK_MS = "skipClickIntervalMs"
+        const val KEY_BLACK_CLICK_MS = "blackClickIntervalMs"
+        const val KEY_PICK_CLICK_MS = "pickClickIntervalMs"
+
+        // 各节奏参数的合法区间（与界面滑块一致）
+        const val SKIP_CLICK_MIN = 300
+        const val SKIP_CLICK_MAX = 1500
+        const val BLACK_CLICK_MIN = 500
+        const val BLACK_CLICK_MAX = 3000
+        const val PICK_CLICK_MIN = 300
+        const val PICK_CLICK_MAX = 2000
     }
 }

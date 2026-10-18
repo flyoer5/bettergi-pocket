@@ -85,7 +85,7 @@ class AutoSkipFeature(
                     state = State.IN_DIALOG
                     return
                 }
-                if (settings.blackScreenClickEnabled) clickBlackScreenIfNeeded(content, actions)
+                if (settings.blackScreenClickEnabled) clickBlackScreenIfNeeded(content, settings, actions)
                 val idleNow = System.currentTimeMillis()
                 if (idleNow - lastIdleLogMs >= IDLE_LOG_INTERVAL_MS) {
                     lastIdleLogMs = idleNow
@@ -120,7 +120,7 @@ class AutoSkipFeature(
                     }
                     val skipNow = System.currentTimeMillis()
                     // 点击节流：避免每帧狂点干扰手动操作（500ms 一次足够逐行跳过对话）
-                    if (skipNow - lastSkipClickMs >= SKIP_CLICK_INTERVAL_MS) {
+                    if (skipNow - lastSkipClickMs >= settings.skipClickIntervalMs) {
                         lastSkipClickMs = skipNow
                         if (skipNow - lastSkipLogMs >= SKIP_LOG_INTERVAL_MS) {
                             lastSkipLogMs = skipNow
@@ -217,9 +217,13 @@ class AutoSkipFeature(
     }
 
     /** 黑屏转场检测：非对话时画面中部 1/3 区域接近全黑则点击推进（移植 PC 版）。 */
-    private fun clickBlackScreenIfNeeded(content: CaptureContent, actions: ActionEmitter) {
+    private fun clickBlackScreenIfNeeded(
+        content: CaptureContent,
+        settings: TriggerSettings,
+        actions: ActionEmitter,
+    ) {
         val now = System.currentTimeMillis()
-        if (now - lastBlackClickMs < BLACK_CLICK_INTERVAL_MS) return
+        if (now - lastBlackClickMs < settings.blackClickIntervalMs) return
         val region = content.captureRectArea
         val grey = region.cacheGreyMatSafe ?: return
         val w = grey.cols()
@@ -347,12 +351,10 @@ class AutoSkipFeature(
 
         /** 固定点与自定义点的最小间距；小于此值视为同一位置，只点一次 */
         private const val QUICK_SKIP_MIN_SEPARATION_PX = 32
-        private const val BLACK_CLICK_INTERVAL_MS = 1200L
         private const val BLACK_RATE_MIN = 0.5
         private const val BLACK_RATE_MAX = 0.98999
         private const val IDLE_LOG_INTERVAL_MS = 5000L
         private const val SKIP_LOG_INTERVAL_MS = 5000L
-        private const val SKIP_CLICK_INTERVAL_MS = 500L
 
         fun selectTopChatIcon(hits: List<Region>): Region? = hits.minByOrNull { it.y }
     }

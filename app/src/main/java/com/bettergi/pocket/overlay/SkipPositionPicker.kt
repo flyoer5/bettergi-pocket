@@ -1,6 +1,7 @@
 package com.bettergi.pocket.overlay
 
 import android.content.Context
+import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -12,6 +13,7 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.bettergi.pocket.R
 import com.bettergi.pocket.settings.TriggerSettingsRepository
+import com.bettergi.pocket.trigger.screenBottomCenter
 
 /**
  * 快速跳过点击位置选择器（十字线 + SeekBar + 拖拽面板 + 测试按钮）。
@@ -31,10 +33,18 @@ class SkipPositionPicker(
     private var pickerParams: WindowManager.LayoutParams? = null
     private var crosshairView: View? = null
     private var crosshairParams: WindowManager.LayoutParams? = null
+    private var fixedMarkerView: View? = null
     private var seekBarX: SeekBar? = null
     private var seekBarY: SeekBar? = null
     private var textX: TextView? = null
     private var textY: TextView? = null
+    private companion object {
+        const val SEEK_MIN = 0.05f
+        const val SEEK_MAX = 0.99f
+        const val SEEK_SPAN = SEEK_MAX - SEEK_MIN      // 0.94
+        const val SEEK_PROGRESS_MAX = 90
+    }
+
     private var tempX: Float = 0.5f
     private var tempY: Float = 0.99f
 
@@ -44,8 +54,8 @@ class SkipPositionPicker(
         if (pickerView != null) return
         val screen = screenSize()
         val settings = settingsRepository.get()
-        tempX = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionX else 0.5f).coerceIn(0.05f, 0.99f)
-        tempY = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionY else 0.99f).coerceIn(0.05f, 0.99f)
+        tempX = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionX else 0.5f).coerceIn(SEEK_MIN, SEEK_MAX)
+        tempY = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionY else 0.7f).coerceIn(SEEK_MIN, SEEK_MAX)
 
         val container = FrameLayout(themedContext)
         val crosshair = View(themedContext).apply {
@@ -53,11 +63,25 @@ class SkipPositionPicker(
         }
         val size = dp(40)
         container.addView(crosshair, FrameLayout.LayoutParams(size, size, Gravity.CENTER))
+
+        // 固定点（原版默认点，始终会被点击）用半透明圆环标出，让"两点并行"可见
+        val marker = View(themedContext).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0x22FFFFFF)
+                setStroke(dp(1), 0xAAFFCC66.toInt())
+            }
+            isClickable = false
+            isFocusable = false
+        }
+        val markerSize = dp(26)
+        container.addView(marker, FrameLayout.LayoutParams(markerSize, markerSize, Gravity.CENTER))
+        fixedMarkerView = marker
         crosshair.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                    tempX = (e.rawX / screen.first).coerceIn(0.05f, 0.99f)
-                    tempY = (e.rawY / screen.second).coerceIn(0.05f, 0.99f)
+                    tempX = (e.rawX / screen.first).coerceIn(SEEK_MIN, SEEK_MAX)
+                    tempY = (e.rawY / screen.second).coerceIn(SEEK_MIN, SEEK_MAX)
                     syncControls()
                     true
                 }
@@ -116,7 +140,7 @@ class SkipPositionPicker(
         }
         val seek = object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val ratio = 0.05f + progress / 90f * 0.9f
+                val ratio = SEEK_MIN + progress / SEEK_PROGRESS_MAX.toFloat() * SEEK_SPAN
                 when (seekBar?.id) {
                     R.id.sp_picker_seek_x -> {
                         tempX = ratio
@@ -136,8 +160,8 @@ class SkipPositionPicker(
         }
         seekBarX?.setOnSeekBarChangeListener(seek)
         seekBarY?.setOnSeekBarChangeListener(seek)
-        seekBarX?.progress = ((tempX - 0.05f) / 0.9f * 90).toInt()
-        seekBarY?.progress = ((tempY - 0.05f) / 0.9f * 90).toInt()
+        seekBarX?.progress = toProgress(tempX)
+        seekBarY?.progress = toProgress(tempY)
         textX?.text = "${(tempX * 100).toInt()}%"
         textY?.text = "${(tempY * 100).toInt()}%"
 
@@ -167,6 +191,7 @@ class SkipPositionPicker(
         pickerParams = null
         crosshairView = null
         crosshairParams = null
+        fixedMarkerView = null
         seekBarX = null
         seekBarY = null
         textX = null
@@ -174,8 +199,8 @@ class SkipPositionPicker(
     }
 
     private fun syncControls() {
-        seekBarX?.progress = ((tempX - 0.05f) / 0.9f * 90).toInt()
-        seekBarY?.progress = ((tempY - 0.05f) / 0.9f * 90).toInt()
+        seekBarX?.progress = toProgress(tempX)
+        seekBarY?.progress = toProgress(tempY)
         textX?.text = "${(tempX * 100).toInt()}%"
         textY?.text = "${(tempY * 100).toInt()}%"
         updateCrosshairOffset()
@@ -185,6 +210,12 @@ class SkipPositionPicker(
         val screen = screenSize()
         crosshairView?.translationX = tempX * screen.first - screen.first / 2f
         crosshairView?.translationY = tempY * screen.second - screen.second / 2f
+        val (fx, fy) = screenBottomCenter(screen.first, screen.second)
+        fixedMarkerView?.translationX = fx - screen.first / 2f
+        fixedMarkerView?.translationY = fy - screen.second / 2f
     }
+
+    private fun toProgress(value: Float): Int =
+        ((value - SEEK_MIN) / SEEK_SPAN * SEEK_PROGRESS_MAX).toInt().coerceIn(0, SEEK_PROGRESS_MAX)
 
 }

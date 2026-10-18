@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="248dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_overlay_log_body"
+    android:orientation="vertical"
+    android:paddingBottom="8dp">
+
+    <LinearLayout
+        android:id="@+id/ct_drag"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="4dp"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="点击节奏"
+            android:textColor="@color/overlay_log_green"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/ct_close"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:background="@drawable/bg_overlay_close"
+            android:contentDescription="关闭"
+            android:padding="4dp"
+            android:src="@drawable/ic_overlay_close"
+            android:tint="@color/overlay_log_green" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <TextView
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="对话跳过"
+            android:textColor="@color/overlay_text_muted"
+            android:textSize="10sp" />
+
+        <SeekBar
+            android:id="@+id/ct_seek_skip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="24"
+            android:paddingEnd="8dp" />
+
+        <TextView
+            android:id="@+id/ct_text_skip"
+            android:layout_width="52dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="500ms"
+            android:textColor="@color/overlay_log_green"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <TextView
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="黑屏点击"
+            android:textColor="@color/overlay_text_muted"
+            android:textSize="10sp" />
+
+        <SeekBar
+            android:id="@+id/ct_seek_black"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="25"
+            android:paddingEnd="8dp" />
+
+        <TextView
+            android:id="@+id/ct_text_black"
+            android:layout_width="52dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="1200ms"
+            android:textColor="@color/overlay_log_green"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <TextView
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="自动拾取"
+            android:textColor="@color/overlay_text_muted"
+            android:textSize="10sp" />
+
+        <SeekBar
+            android:id="@+id/ct_seek_pick"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="17"
+            android:paddingEnd="8dp" />
+
+        <TextView
+            android:id="@+id/ct_text_pick"
+            android:layout_width="52dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="800ms"
+            android:textColor="@color/overlay_log_green"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="10dp"
+        android:paddingTop="2dp"
+        android:paddingEnd="10dp"
+        android:text="间隔越小越快；过快会与动画抢跑，建议 ≥400ms"
+        android:textColor="@color/overlay_text_muted"
+        android:textSize="9sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingTop="8dp">
+
+        <TextView
+            android:id="@+id/ct_reset"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="16dp"
+            android:background="@drawable/bg_overlay_close"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="5dp"
+            android:text="恢复默认"
+            android:textColor="@color/overlay_text_muted"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/ct_ok"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_overlay_close"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="5dp"
+            android:text="完成"
+            android:textColor="@color/overlay_log_green"
+            android:textSize="11sp" />
+    </LinearLayout>
+</LinearLayout>

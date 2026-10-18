@@ -125,6 +125,15 @@ class OverlayWindowController(
             onFlashTap = { x, y -> flashTap(x, y) },
         )
     }
+    private val clickTempoPanel: ClickTempoPanel by lazy {
+        ClickTempoPanel(
+            themedContext = themedContext,
+            windowManager = windowManager,
+            settingsRepository = settingsRepository,
+            defaultPosition = { defaultLogPosition() },
+            dp = { dp(it) },
+        )
+    }
     private var rowAutoSkip: View? = null
     private var rowQuickSkip: View? = null
     private var rowSmartOption: View? = null
@@ -141,6 +150,8 @@ class OverlayWindowController(
     private var spChevron: ImageView? = null
     private var spStatus: TextView? = null
     private var spReset: TextView? = null
+    private var rowClickTempo: View? = null
+    private var ctStatus: TextView? = null
     private var talkingUntilMs: Long = 0L
     private var lastTalkLogMs: Long = 0L
     private val clearTalkingRunnable = Runnable { refreshStatus() }
@@ -159,6 +170,8 @@ class OverlayWindowController(
             } else {
                 "默认（屏幕底部中央）"
             }
+            ctStatus?.text =
+                "跳过 ${settings.skipClickIntervalMs}ms · 黑屏 ${settings.blackClickIntervalMs}ms"
             switchSmartOption?.isChecked = settings.smartOptionEnabled
             switchBlackScreen?.isChecked = settings.blackScreenClickEnabled
             switchTapIndicator?.isChecked = settings.showTapIndicator
@@ -229,6 +242,9 @@ class OverlayWindowController(
         spReset = root.findViewById(R.id.overlay_quick_skip_position_reset)
         rowQuickSkipPosition?.setOnClickListener { skipPositionPicker.show() }
         spReset?.setOnClickListener { settingsRepository.resetQuickSkipPosition() }
+        rowClickTempo = root.findViewById(R.id.overlay_row_click_tempo)
+        ctStatus = root.findViewById(R.id.overlay_click_tempo_status)
+        rowClickTempo?.setOnClickListener { clickTempoPanel.show() }
         rowSmartOption = root.findViewById(R.id.overlay_row_smart_option)
         rowBlackScreen = root.findViewById(R.id.overlay_row_black_screen)
         rowTapIndicator = root.findViewById(R.id.overlay_row_tap_indicator)
@@ -423,6 +439,9 @@ class OverlayWindowController(
         switchAutoSkip = null
         switchQuickSkip = null
         skipPositionPicker.hide()
+        clickTempoPanel.hide()
+        rowClickTempo = null
+        ctStatus = null
         rowQuickSkipPosition = null
         spChevron = null
         spStatus = null

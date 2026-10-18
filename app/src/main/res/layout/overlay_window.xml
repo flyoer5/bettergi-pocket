@@ -332,7 +332,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="点击位置"
+                        android:text="附加点击点"
                         android:textColor="@color/overlay_text"
                         android:textSize="12sp" />
 
@@ -341,7 +341,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="1dp"
-                        android:text="默认（屏幕底部中央）"
+                        android:text="仅默认点（屏幕底部中央）"
                         android:textColor="@color/overlay_text_muted"
                         android:textSize="10sp" />
                 </LinearLayout>
@@ -352,6 +352,50 @@
                     android:layout_height="wrap_content"
                     android:padding="6dp"
                     android:text="↺"
+                    android:textColor="@color/overlay_text_muted"
+                    android:textSize="14sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:id="@+id/overlay_row_click_tempo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:minHeight="36dp"
+                android:orientation="horizontal"
+                android:paddingStart="26dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="4dp"
+                android:paddingBottom="4dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="点击节奏"
+                        android:textColor="@color/overlay_text"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/overlay_click_tempo_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:text="跳过 500ms · 黑屏 1200ms"
+                        android:textColor="@color/overlay_text_muted"
+                        android:textSize="10sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:padding="6dp"
+                    android:text="›"
                     android:textColor="@color/overlay_text_muted"
                     android:textSize="14sp" />
             </LinearLayout>

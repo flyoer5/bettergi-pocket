@@ -13,4 +13,10 @@ data class TriggerSettings(
     val quickSkipCustomPosition: Boolean = false,
     val quickSkipPositionX: Float = 0.5f,
     val quickSkipPositionY: Float = 0.99f,
+    /** 对话推进点击间隔（ms）；越小越快，过小会与动画抢跑 */
+    val skipClickIntervalMs: Int = 500,
+    /** 黑屏转场点击间隔（ms） */
+    val blackClickIntervalMs: Int = 1200,
+    /** 自动拾取点击间隔（ms） */
+    val pickClickIntervalMs: Int = 800,
 )

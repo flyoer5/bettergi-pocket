@@ -23,11 +23,12 @@ class AutoPickFeature : TriggerFeature {
         if (now < nextClickAtMs) return
         val (x, y) = screenBottomCenter(tick.screenWidth, tick.screenHeight)
         actions.emit(ClickAction(x, y))
-        nextClickAtMs = now + CLICK_INTERVAL_MS
+        nextClickAtMs = now + settings.pickClickIntervalMs
     }
 
     companion object {
-        const val CLICK_INTERVAL_MS = 800L
+        /** 仅作默认值参考；实际节奏由 TriggerSettings.pickClickIntervalMs 控制 */
+        const val CLICK_INTERVAL_MS = 800
 
         /** Temporarily disabled — set true to restore auto-pick UI and behavior. */
         const val AVAILABLE = false
