@@ -400,8 +400,10 @@ class OverlayWindowController(
         transforming = false
         expanded = false
         talkingUntilMs = 0L
-        // 持久化日志窗口关闭状态，避免重启助手后日志又自动弹出
-        logWindowPanel.setVisible(false)
+        // 收起界面时隐藏日志窗，但不改写用户偏好：
+        // KEY_LOG_VISIBLE 只由用户显式操作（关闭按钮/开关）持久化。
+        // 若此处按默认 persist=true 写入 false，"日志窗默认打开"的偏好会被每次退出吞掉。
+        logWindowPanel.setVisible(false, persist = false)
         val view = rootView ?: return
         settingsRepository.removeListener(settingsListener)
         try {

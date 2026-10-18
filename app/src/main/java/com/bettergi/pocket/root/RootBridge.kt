@@ -216,7 +216,10 @@ object RootBridge {
             line
         } catch (e: SocketTimeoutException) {
             AppLog.w(TAG, "request 超时: $cmd")
-            drainResidual(conn)
+            // 超时后流状态不可信：迟到的回复可能已落入 BufferedReader 内部缓冲，
+            // 从 socket 层清残留碰不到它，会让后续每条指令的响应错位一格。
+            // 协议无状态，直接关连接交给重连重建干净的流。
+            abortConnection("request 超时: $cmd")
             null
         } catch (e: Exception) {
             AppLog.w(TAG, "request failed: $cmd -> ${e.message}")
@@ -226,20 +229,16 @@ object RootBridge {
     }
 
     /**
-     * 丢弃超时后 socket 里残留的回复行：helper 可能在超时后仍写完响应，
-     * 不清空会让下次 request 读到旧数据造成协议错位。
-     * 仅清空当前已缓冲字节，不阻塞（读不到就放弃）。
+     * 连接不可恢复时立即废弃：关闭 socket 并置空连接，触发重连。
+     * 与 markDisconnected 的区别是连底层 fd 一起丢弃，避免残留连接继续被复用。
      */
-    private fun drainResidual(conn: Connection) {
+    private fun abortConnection(reason: String) {
         try {
-            val avail = conn.socket.inputStream.available()
-            if (avail > 0) {
-                val buf = ByteArray(avail)
-                val read = conn.socket.inputStream.read(buf, 0, avail)
-                if (read > 0) AppLog.d(TAG, "drained ${read}B 残留回复")
-            }
+            connection?.socket?.close()
         } catch (_: Throwable) {
         }
+        connection = null
+        markDisconnected(reason)
     }
 
     fun foreground(): String? {
@@ -384,19 +383,50 @@ object RootBridge {
         }
     }
 
+    /**
+     * 执行 shell 命令并收集输出。
+     *
+     * 注意：读流必须异步。su 守护进程挂死或弹授权框时，inputStream 永不 EOF，
+     * 若先 readText() 再 waitFor(timeout)，超时判定永远执行不到，调用线程会被无限阻塞
+     * （这条路径是自动点击主链路，卡住等于 AutoSkip 静默停摆）。
+     * 因此：先 waitFor(timeout) 判生死，超时 destroyForcibly + 中断读线程并返回 null（视为失败）。
+     */
     private fun runCommand(ctx: Context, command: String, timeoutMs: Long): String? {
         val proc = try {
             ProcessBuilder("sh", "-c", command).redirectErrorStream(true).start()
         } catch (e: Exception) {
             return null
         }
-        return try {
-            val out = proc.inputStream.bufferedReader().readText()
-            if (!proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-                proc.destroy()
+        val output = StringBuilder()
+        val readerThread = Thread {
+            try {
+                proc.inputStream.bufferedReader().use { br ->
+                    val buf = CharArray(1024)
+                    while (true) {
+                        val n = br.read(buf)
+                        if (n <= 0) break
+                        synchronized(output) { output.append(buf, 0, n) }
+                    }
+                }
+            } catch (_: Throwable) {
+                // 进程被杀导致读流异常：忽略，输出保持已读部分
             }
-            out
+        }.apply {
+            isDaemon = true
+            name = "bgroot-reader"
+            start()
+        }
+        return try {
+            if (!proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+                proc.destroyForcibly()
+                readerThread.interrupt()
+                null
+            } else {
+                readerThread.join(300)   // 进程已退出，读线程随即结束；短暂等待保证输出完整
+                synchronized(output) { output.toString() }
+            }
         } catch (e: Exception) {
+            proc.destroyForcibly()
             null
         }
     }
