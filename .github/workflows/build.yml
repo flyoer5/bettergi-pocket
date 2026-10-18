@@ -111,7 +111,8 @@ jobs:
 
       - name: Build APK (main=debug, root=release+R8)
         run: |
-          if [ "${{ github.ref_name }}" = "root" ]; then
+          # root 分支与 tag 都出 release（tag 是发布源）；其他分支只出 debug 供调试
+          if [ "${{ github.ref_name }}" = "root" ] || [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
             ./gradlew assembleRelease --no-daemon
           else
             ./gradlew assembleDebug --no-daemon
