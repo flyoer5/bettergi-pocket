@@ -2,6 +2,8 @@ package com.bettergi.pocket.trigger
 
 import android.os.Handler
 import android.os.HandlerThread
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import android.util.Log
 import com.bettergi.pocket.capture.ScreenCaptureController
 import com.bettergi.pocket.input.ActionEmitter
@@ -18,6 +20,15 @@ class TriggerEngine(
 ) {
     private val thread = HandlerThread("TriggerEngine").apply { start() }
     private val handler = Handler(thread.looper)
+
+    /**
+     * 动作执行线程：点击注入要 spawn `sh -c su -c input tap`，实测 100~300ms。
+     * 放在引擎线程同步执行会把下一拍识别整体拖慢（快速跳过节流 500ms 会被吃掉一半）。
+     * 单线程保证动作顺序，积压时不阻塞识别。
+     */
+    private val actionExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "bg-action").apply { isDaemon = true }
+    }
 
     @Volatile
     private var running = false
@@ -39,6 +50,12 @@ class TriggerEngine(
     fun release() {
         stop()
         thread.quitSafely()
+        // quitSafely 只保证"已投递的消息会跑完"，不阻塞返回；
+        // 必须等引擎线程真正退出后再清模板 Mat，否则正在进行的匹配会踩到已释放内存
+        runCatching { thread.join(1000L) }
+        actionExecutor.shutdownNow()
+        // 释放识别缓存里的 native Mat（OpenCV 内存不等 GC 才稳）
+        features.forEach { runCatching { it.release() } }
     }
 
     private val tickRunnable = object : Runnable {
@@ -92,7 +109,7 @@ class TriggerEngine(
                         enabled.forEach { it.onTick(tick, settings, emitter) }
                     }
                 }
-                emitter.flushTo(actionController)
+                emitter.flushTo(actionExecutor, actionController)
             } catch (e: Throwable) {
                 // 捕获全部异常/错误(含 OpenCV native 错误、OOM 边缘), 避免引擎线程崩溃后服务还在跑但无识别
                 if (e is OutOfMemoryError) {
@@ -118,9 +135,13 @@ class TriggerEngine(
             onAction()
         }
 
-        fun flushTo(controller: AutomationController) {
-            pending.forEach { controller.execute(it) }
+        fun flushTo(executor: ExecutorService, controller: AutomationController) {
+            if (pending.isEmpty()) return
+            val batch = pending.toList()
             pending.clear()
+            executor.execute {
+                batch.forEach { action -> runCatching { controller.execute(action) } }
+            }
         }
     }
 

@@ -55,6 +55,8 @@ static int scr_h = 0;
 static int next_tid = 1;
 static volatile sig_atomic_t running = 1;
 static int app_pid = 0;
+/* 未显式传 --app-pid 时，用"父进程是否还在"兜底判断 app 存活 */
+static pid_t watch_ppid = 0;
 
 static long now_ms(void) {
     struct timespec ts;
@@ -69,6 +71,9 @@ static void msleep(long ms) {
     nanosleep(&ts, NULL);
 }
 
+/* 最近一次注入是否有事件写失败（设备被移除 / O_NONBLOCK 缓冲满） */
+static int emit_failed = 0;
+
 static void emit(int fd, unsigned short type, unsigned short code, int value) {
     struct input_event ev;
     memset(&ev, 0, sizeof(ev));
@@ -76,7 +81,9 @@ static void emit(int fd, unsigned short type, unsigned short code, int value) {
     ev.code = code;
     ev.value = value;
     if (write(fd, &ev, sizeof(ev)) < 0) {
-        /* 设备被移除时忽略；上层会在下次指令前重建 */
+        /* 不在这里重试：记录失败，由 do_tap/do_swipe 汇总后如实回错，
+         * 避免"客户端收到 OK、实际一个事件都没注入"的假成功 */
+        emit_failed = 1;
     }
 }
 
@@ -274,13 +281,16 @@ static void touch_up(void) {
     emit(ufd, EV_SYN, SYN_REPORT, 0);
 }
 
-static void do_tap(int x, int y, int dur_ms) {
+static int do_tap(int x, int y, int dur_ms) {
+    emit_failed = 0;
     touch_down(x, y);
     msleep(dur_ms > 0 ? dur_ms : 50);
     touch_up();
+    return emit_failed ? -1 : 0;
 }
 
-static void do_swipe(int x1, int y1, int x2, int y2, int dur_ms) {
+static int do_swipe(int x1, int y1, int x2, int y2, int dur_ms) {
+    emit_failed = 0;
     int steps = dur_ms / 10;
     if (steps < 2) steps = 2;
     touch_down(x1, y1);
@@ -291,6 +301,7 @@ static void do_swipe(int x1, int y1, int x2, int y2, int dur_ms) {
         msleep(10);
     }
     touch_up();
+    return emit_failed ? -1 : 0;
 }
 
 /* 包名合法性校验：只允许字母数字、点、下划线，防命令注入 */
@@ -303,32 +314,69 @@ static int valid_pkg(const char *s) {
 }
 
 /* 解析 dumpsys 里的前台 ActivityRecord，取包名；找不到置空 */
+/* 从一行 dumpsys 输出里提取包名。
+ * 兼容: "ActivityRecord{abc u0 com.x/com.y.Act t1}"、"u10 com.x/com.y"、
+ *       "mCurrentFocus=Window{abc u0 com.x/com.y.Act}"、"com.x/com.y.Act" */
+static int extract_pkg_from_line(const char *line, char *out, size_t out_sz) {
+    const char *slash = strchr(line, '/');
+    if (!slash) return 0;
+    const char *start = slash;
+    while (start > line) {
+        char c = *(start - 1);
+        if (c == ' ' || c == '\t' || c == '{' || c == '}') break;
+        start--;
+    }
+    size_t n = (size_t)(slash - start);
+    if (n == 0) return 0;
+    /* 去掉粘连的 user 前缀（u0xxx / u10xxx）；正常情况有空格分隔，走不到这里 */
+    if (start[0] == 'u') {
+        size_t k = 1;
+        while (k < n && start[k] >= '0' && start[k] <= '9') k++;
+        if (k > 1 && k < n) {
+            start += k;
+            n -= k;
+        }
+    }
+    if (n == 0 || n >= out_sz) return 0;
+    memcpy(out, start, n);
+    out[n] = '\0';
+    return 1;
+}
+
+/* 逐行解析 dumpsys 输出，返回首个可识别的前台包名 */
+static int parse_foreground(const char *dump, char *out, size_t out_sz) {
+    const char *p = dump;
+    while (*p != '\0') {
+        const char *eol = strchr(p, '\n');
+        size_t len = eol ? (size_t)(eol - p) : strlen(p);
+        char line[512];
+        if (len >= sizeof(line)) len = sizeof(line) - 1;
+        memcpy(line, p, len);
+        line[len] = '\0';
+        if (strchr(line, '/') != NULL && extract_pkg_from_line(line, out, out_sz)) return 1;
+        if (eol == NULL) break;
+        p = eol + 1;
+    }
+    return 0;
+}
+
+/* 查询前台包名：多来源依次尝试（窗口焦点最快也最稳，Activity 栈兜底）。
+ * 旧实现硬要求 " u0 "，工作资料(u10)/部分 ROM 直接解析失败 → 上层把 null
+ * 当"不在前台"从而误拉起游戏，这里改为任意 user id 均可。 */
 static void query_foreground(char *out, size_t out_sz) {
     out[0] = '\0';
+    static const char *cmds[] = {
+        "dumpsys window 2>/dev/null | grep -m1 -E 'mCurrentFocus|mFocusedApp'",
+        "dumpsys activity activities 2>/dev/null | grep -m1 -E 'topResumedActivity|mResumedActivity'",
+        "dumpsys activity 2>/dev/null | grep -m1 'mFocusedActivity'",
+        NULL,
+    };
     char dump[1024];
-    if (shell_capture(
-            "dumpsys activity activities 2>/dev/null | "
-            "grep -m1 -E 'topResumedActivity|mResumedActivity|mFocusedApp'",
-            dump, sizeof(dump)) != 0 && dump[0] == '\0') {
-        return;
-    }
-    /* 按行扫描（grep -m1 只给一行，但保留循环便于兼容不同 ROM 输出） */
-    char *save = NULL;
-    for (char *buf = strtok_r(dump, "\n", &save); buf != NULL; buf = strtok_r(NULL, "\n", &save)) {
-        char *start = strchr(buf, '{');
-        if (!start) continue;
-        char *mark = strstr(buf, " u0 ");
-        if (!mark) continue;
-        char *pkg = mark + 4;
-        char *slash = strchr(pkg, '/');
-        char *end = slash ? slash : pkg;
-        while (*end && *end != ' ' && *end != '}' && *end != '\n') end++;
-        size_t n = (size_t)(end - pkg);
-        if (n > 0 && n < out_sz) {
-            memcpy(out, pkg, n);
-            out[n] = '\0';
-            break;
-        }
+    for (int i = 0; cmds[i] != NULL; i++) {
+        dump[0] = '\0';
+        shell_capture(cmds[i], dump, sizeof(dump));
+        if (dump[0] == '\0') continue;
+        if (parse_foreground(dump, out, out_sz)) return;
     }
 }
 
@@ -351,18 +399,15 @@ static int handle_line(const char *line, char *resp, size_t resp_sz) {
         return 0;
     }
     if (sscanf(line, "TAP %d %d %d", &x, &y, &dur) == 3) {
-        do_tap(x, y, dur);
-        snprintf(resp, resp_sz, "OK tap\n");
+        snprintf(resp, resp_sz, do_tap(x, y, dur) == 0 ? "OK tap\n" : "ERR tap\n");
         return 0;
     }
     if (sscanf(line, "LONG %d %d %d", &x, &y, &dur) == 3) {
-        do_tap(x, y, dur);
-        snprintf(resp, resp_sz, "OK long\n");
+        snprintf(resp, resp_sz, do_tap(x, y, dur) == 0 ? "OK long\n" : "ERR long\n");
         return 0;
     }
     if (sscanf(line, "SWIPE %d %d %d %d %d", &x1, &y1, &x2, &y2, &dur) == 5) {
-        do_swipe(x1, y1, x2, y2, dur);
-        snprintf(resp, resp_sz, "OK swipe\n");
+        snprintf(resp, resp_sz, do_swipe(x1, y1, x2, y2, dur) == 0 ? "OK swipe\n" : "ERR swipe\n");
         return 0;
     }
     if (strncmp(line, "PID ", 4) == 0) {
@@ -458,8 +503,16 @@ static int run_server(const char *sock_path, int allow_uid) {
     fflush(stderr);
 
     while (running) {
-        if (app_pid > 0 && kill(app_pid, 0) != 0 && errno == ESRCH) {
-            fprintf(stderr, "app process gone, helper exit\n");
+        if (app_pid > 0) {
+            if (kill(app_pid, 0) != 0 && errno == ESRCH) {
+                fprintf(stderr, "app process gone, helper exit\n");
+                break;
+            }
+        } else if (watch_ppid > 1 && getppid() != watch_ppid) {
+            /* app 被 kill 后本进程被 init 收养，getppid() 会变 → 立刻退出，
+             * 避免 --app-pid 缺失时留下永久驻留的 root 进程 */
+            fprintf(stderr, "parent gone (ppid %d -> %d), helper exit\n",
+                    (int)watch_ppid, (int)getppid());
             break;
         }
         /* 用 select 1s 超时轮询，避免 accept 阻塞时无法检查 app 存活 */
@@ -573,6 +626,7 @@ int main(int argc, char **argv) {
     scr_w = arg_value(argc, argv, "--w", 0);
     scr_h = arg_value(argc, argv, "--h", 0);
     app_pid = arg_value(argc, argv, "--app-pid", 0);
+    watch_ppid = getppid();
     if (scr_w <= 0 || scr_h <= 0) {
         if (!detect_screen()) {
             scr_w = 1080;
@@ -620,8 +674,8 @@ int main(int argc, char **argv) {
         int y = atoi(argv[3]);
         int dur = arg_value(argc, argv, "--dur", 50);
         long t0 = now_ms();
-        do_tap(x, y, dur);
-        fprintf(stderr, "OK tap %d %d dur=%d elapsed=%ldms\n", x, y, dur, now_ms() - t0);
+        int tap_rc = do_tap(x, y, dur);
+        fprintf(stderr, "%s tap %d %d dur=%d elapsed=%ldms\n", tap_rc == 0 ? "OK" : "ERR", x, y, dur, now_ms() - t0);
         msleep(150);
         destroy_uinput();
         return 0;
@@ -635,8 +689,8 @@ int main(int argc, char **argv) {
         int x1 = atoi(argv[2]), y1 = atoi(argv[3]);
         int x2 = atoi(argv[4]), y2 = atoi(argv[5]);
         int dur = arg_value(argc, argv, "--dur", 300);
-        do_swipe(x1, y1, x2, y2, dur);
-        fprintf(stderr, "OK swipe\n");
+        int sw_rc = do_swipe(x1, y1, x2, y2, dur);
+        fprintf(stderr, sw_rc == 0 ? "OK swipe\n" : "ERR swipe\n");
         msleep(150);
         destroy_uinput();
         return 0;

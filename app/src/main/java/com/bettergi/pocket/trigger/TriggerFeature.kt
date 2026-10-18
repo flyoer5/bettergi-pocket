@@ -25,4 +25,7 @@ interface TriggerFeature {
     fun needsFrame(settings: TriggerSettings): Boolean = isEnabled(settings)
 
     fun onTick(tick: FeatureTick, settings: TriggerSettings, actions: ActionEmitter)
+
+    /** 引擎释放时调用：功能自行释放持有的 native 资源（如 OpenCV Mat 缓存）。 */
+    fun release() {}
 }

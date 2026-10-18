@@ -43,6 +43,8 @@ object GenshinPackages {
         allowed: Boolean,
     ): Boolean {
         if (!enabled || !allowed || alreadyAttempted) return false
-        return genshinInForeground != true
+        // 只有"明确查到自己不在前台"才启动；查询失败(null)时保守跳过，
+        // 否则一次 dumpsys 解析失败就会把正在运行的游戏再拉一次（甚至顶掉当前界面）
+        return genshinInForeground == false
     }
 }

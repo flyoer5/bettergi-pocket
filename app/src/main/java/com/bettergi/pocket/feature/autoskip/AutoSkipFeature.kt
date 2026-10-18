@@ -70,6 +70,11 @@ class AutoSkipFeature(
     override fun isEnabled(settings: TriggerSettings): Boolean =
         settings.screenShareEnabled && settings.autoSkipEnabled
 
+    override fun release() {
+        // 服务停止/引擎释放时归还模板 Mat，避免 native 内存滞留到进程结束
+        assets.clear()
+    }
+
     override fun onTick(tick: FeatureTick, settings: TriggerSettings, actions: ActionEmitter) {
         val content = tick.content ?: return
 
