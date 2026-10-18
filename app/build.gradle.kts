@@ -14,8 +14,8 @@ android {
         applicationId = "com.bettergi.pocket"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2-root"
+        versionCode = 4
+        versionName = "1.2.1-root"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

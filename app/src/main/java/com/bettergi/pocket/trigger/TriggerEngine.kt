@@ -17,6 +17,8 @@ class TriggerEngine(
     private val captureController: ScreenCaptureController,
     private val features: List<TriggerFeature>,
     private val actionController: AutomationController,
+    /** 当前前台是否原神：true/false/null(未知)。非 true 时不产生任何点击动作。 */
+    private val isGameForeground: () -> Boolean? = { true },
 ) {
     private val thread = HandlerThread("TriggerEngine").apply { start() }
     private val handler = Handler(thread.looper)
@@ -35,6 +37,9 @@ class TriggerEngine(
 
     @Volatile
     private var lastActionAtMs: Long = 0L
+
+    @Volatile
+    private var lastFgWarnMs: Long = 0L
 
     fun start() {
         if (running) return
@@ -70,6 +75,21 @@ class TriggerEngine(
 
             if (!captureController.isRunning()) {
                 handler.postDelayed(this, WAIT_CAPTURE_MS)
+                return
+            }
+
+            // 前台门控：退出游戏/切到桌面后必须停止一切点击。
+            // 识别是在屏幕流上做的，桌面上的图标/暗色背景同样可能误命中模板，
+            // 之前的版本没有这层判断，于是"退到桌面还在点"。
+            val fg = isGameForeground()
+            if (fg != true) {
+                captureController.discardLatestImages()
+                val nowFg = System.currentTimeMillis()
+                if (fg == null && nowFg - lastFgWarnMs >= FG_WARN_INTERVAL_MS) {
+                    lastFgWarnMs = nowFg
+                    Log.w(TAG, "无法确认前台应用，已暂停自动点击")
+                }
+                handler.postDelayed(this, FG_PAUSED_TICK_MS)
                 return
             }
 
@@ -151,5 +171,7 @@ class TriggerEngine(
         const val SLOW_TICK_MS = 600L
         const val ACTIVE_WINDOW_MS = 1500L
         const val WAIT_CAPTURE_MS = 300L
+        const val FG_PAUSED_TICK_MS = 500L
+        const val FG_WARN_INTERVAL_MS = 30000L
     }
 }

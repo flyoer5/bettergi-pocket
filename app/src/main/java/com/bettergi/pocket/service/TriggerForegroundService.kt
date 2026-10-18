@@ -19,6 +19,7 @@ import com.bettergi.pocket.capture.ScreenCaptureController
 import com.bettergi.pocket.feature.autopick.AutoPickFeature
 import com.bettergi.pocket.feature.autoskip.AutoSkipFeature
 import com.bettergi.pocket.feature.autoskip.OptionKeywords
+import com.bettergi.pocket.genshin.ForegroundWatcher
 import com.bettergi.pocket.genshin.GenshinLaunchMonitor
 import com.bettergi.pocket.genshin.GenshinLauncher
 import com.bettergi.pocket.genshin.GenshinPackages
@@ -40,6 +41,8 @@ class TriggerForegroundService : Service() {
     private lateinit var genshinLaunchMonitor: GenshinLaunchMonitor
     private lateinit var engine: TriggerEngine
     private val rootProbe = RootStatusProbe()
+    /** 前台状态轮询（独立线程，TTL 1s），供识别引擎做点击门控 */
+    private val foregroundWatcher = ForegroundWatcher({ rootProbe.foregroundPackage() })
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -105,6 +108,7 @@ class TriggerForegroundService : Service() {
                 ),
             ),
             actionController = RootAutomationController(applicationContext, overlayController),
+            isGameForeground = { foregroundWatcher.isGameForeground() },
         )
         settingsRepository.addListener(settingsListener)
         Thread {
@@ -121,6 +125,7 @@ class TriggerForegroundService : Service() {
                 }
             } else {
                 // root 就绪后再做前台感知，避免与 start() 握手并发读写 socket
+                foregroundWatcher.start()
                 genshinLaunchMonitor.start()
             }
         }.start()
@@ -199,6 +204,7 @@ class TriggerForegroundService : Service() {
         // 先撤悬浮窗（快），再停 root 后端（stop 内含兜底 kill /proc 扫描, 可能阻塞数秒, 放后面避免悬浮窗残留）
         overlayController.hide()
         RootBridge.stop()
+        foregroundWatcher.stop()
         genshinLaunchMonitor.stop()
         engine.release()
         captureController.stop()
