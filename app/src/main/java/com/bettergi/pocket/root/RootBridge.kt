@@ -432,7 +432,17 @@ object RootBridge {
                 null
             } else {
                 readerThread.join(300)   // 进程已退出，读线程随即结束；短暂等待保证输出完整
-                synchronized(output) { output.toString() }
+                // 退出码非 0 一律视为失败并返回 null：
+                // 例：Magisk DenyList 隐藏 su 时 `sh -c "su -c input tap"` 退出 127，
+                // 旧实现只判"进程能启动"就返回非 null，inputTap 会误报成功，
+                // AutoSkip 于是持续"点击成功"却毫无效果（且永远不会触发重试逻辑）。
+                val exit = proc.exitValue()
+                if (exit != 0) {
+                    AppLog.w(TAG, "命令失败(exit=$exit): ${command.take(80)}")
+                    null
+                } else {
+                    synchronized(output) { output.toString() }
+                }
             }
         } catch (e: Exception) {
             proc.destroyForcibly()
