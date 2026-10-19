@@ -85,7 +85,7 @@ class AutoSkipFeature(
                     state = State.IN_DIALOG
                     return
                 }
-                if (settings.blackScreenClickEnabled) clickBlackScreenIfNeeded(content, settings, actions)
+                if (settings.blackScreenClickEnabled) clickBlackScreenIfNeeded(content, tick, settings, actions)
                 val idleNow = System.currentTimeMillis()
                 if (idleNow - lastIdleLogMs >= IDLE_LOG_INTERVAL_MS) {
                     lastIdleLogMs = idleNow
@@ -219,6 +219,7 @@ class AutoSkipFeature(
     /** 黑屏转场检测：非对话时画面中部 1/3 区域接近全黑则点击推进（移植 PC 版）。 */
     private fun clickBlackScreenIfNeeded(
         content: CaptureContent,
+        tick: FeatureTick,
         settings: TriggerSettings,
         actions: ActionEmitter,
     ) {
@@ -239,9 +240,24 @@ class AutoSkipFeature(
             if (rate >= BLACK_RATE_MIN && rate < BLACK_RATE_MAX) {
                 // 坐标系必须换算回原生捕获（w/h 是 ≤1920 的缩放图尺寸，直接当屏幕坐标会点偏）
                 val (cx, cy) = content.captureRectArea.centerOnNativeCapture()
-                Log.i(TAG, "black transition detected, rate=$rate, click center $cx,$cy")
+                // 与对话跳过同规则：中央固定点始终保留，开启附加点后叠加第二处；
+                // 黑屏转场时画面无 UI，多点覆盖能减少"点空"导致的卡转场
+                val points = ArrayList<Pair<Int, Int>>(2)
+                points.add(cx to cy)
+                if (settings.quickSkipCustomPosition) {
+                    val ax = (tick.screenWidth * settings.quickSkipPositionX).toInt()
+                        .coerceIn(0, tick.screenWidth)
+                    val ay = (tick.screenHeight * settings.quickSkipPositionY).toInt()
+                        .coerceIn(0, tick.screenHeight)
+                    val dx = ax - cx
+                    val dy = ay - cy
+                    if (dx * dx + dy * dy >= QUICK_SKIP_MIN_SEPARATION_PX * QUICK_SKIP_MIN_SEPARATION_PX) {
+                        points.add(ax to ay)
+                    }
+                }
+                Log.i(TAG, "black transition detected, rate=$rate, click ${points.joinToString("/")}")
                 events?.onBlackScreenClicked(cx, cy)
-                actions.emit(ClickAction(cx, cy))
+                points.forEach { (x, y) -> actions.emit(ClickAction(x, y)) }
                 lastBlackClickMs = now
             }
         } finally {
