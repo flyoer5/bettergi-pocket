@@ -332,7 +332,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="附加点击点"
+                        android:text="对话跳过附加点"
                         android:textColor="@color/overlay_text"
                         android:textSize="12sp" />
 
@@ -341,7 +341,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="1dp"
-                        android:text="仅默认点（屏幕底部中央）"
+                        android:text="仅底部默认点"
                         android:textColor="@color/overlay_text_muted"
                         android:textSize="10sp" />
                 </LinearLayout>
@@ -489,6 +489,52 @@
                     app:thumbTintMode="src_in"
                     app:trackTint="@color/overlay_switch_track"
                     app:trackTintMode="src_in" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/overlay_row_black_position"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:minHeight="36dp"
+                android:orientation="horizontal"
+                android:paddingStart="26dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="4dp"
+                android:paddingBottom="4dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="黑屏点击附加点"
+                        android:textColor="@color/overlay_text"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/overlay_black_position_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:text="仅中央点（画面中心）"
+                        android:textColor="@color/overlay_text_muted"
+                        android:textSize="10sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/overlay_black_position_reset"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:padding="6dp"
+                    android:text="↺"
+                    android:textColor="@color/overlay_text_muted"
+                    android:textSize="14sp" />
             </LinearLayout>
 
             <LinearLayout

@@ -244,10 +244,10 @@ class AutoSkipFeature(
                 // 黑屏转场时画面无 UI，多点覆盖能减少"点空"导致的卡转场
                 val points = ArrayList<Pair<Int, Int>>(2)
                 points.add(cx to cy)
-                if (settings.quickSkipCustomPosition) {
-                    val ax = (tick.screenWidth * settings.quickSkipPositionX).toInt()
+                if (settings.blackScreenCustomPosition) {
+                    val ax = (tick.screenWidth * settings.blackScreenPositionX).toInt()
                         .coerceIn(0, tick.screenWidth)
-                    val ay = (tick.screenHeight * settings.quickSkipPositionY).toInt()
+                    val ay = (tick.screenHeight * settings.blackScreenPositionY).toInt()
                         .coerceIn(0, tick.screenHeight)
                     val dx = ax - cx
                     val dy = ay - cy

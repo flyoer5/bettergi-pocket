@@ -147,6 +147,9 @@ class OverlayWindowController(
     private var spChevron: ImageView? = null
     private var spStatus: TextView? = null
     private var spReset: TextView? = null
+    private var rowBlackPosition: View? = null
+    private var blackPosStatus: TextView? = null
+    private var blackPosReset: TextView? = null
     private var rowClickTempo: View? = null
     private var ctStatus: TextView? = null
     private var talkingUntilMs: Long = 0L
@@ -162,10 +165,14 @@ class OverlayWindowController(
             switchAutoSkip?.isChecked = settings.autoSkipEnabled
             switchQuickSkip?.isChecked = settings.quickSkipDialogueEnabled
             spStatus?.text = if (settings.quickSkipCustomPosition) {
-                "自定义 ${(settings.quickSkipPositionX * 100).toInt()}%,${(settings.quickSkipPositionY * 100).toInt()}%" +
-                    "（叠加默认点）"
+                "底部点 + ${(settings.quickSkipPositionX * 100).toInt()}%,${(settings.quickSkipPositionY * 100).toInt()}%"
             } else {
-                "默认（屏幕底部中央）"
+                "仅底部默认点"
+            }
+            blackPosStatus?.text = if (settings.blackScreenCustomPosition) {
+                "中央点 + ${(settings.blackScreenPositionX * 100).toInt()}%,${(settings.blackScreenPositionY * 100).toInt()}%"
+            } else {
+                "仅中央点（画面中心）"
             }
             ctStatus?.text =
                 "跳过 ${settings.skipClickIntervalMs}ms · 黑屏 ${settings.blackClickIntervalMs}ms"
@@ -234,8 +241,13 @@ class OverlayWindowController(
         rowQuickSkipPosition = root.findViewById(R.id.overlay_row_quick_skip_position)
         spStatus = root.findViewById(R.id.overlay_quick_skip_position_status)
         spReset = root.findViewById(R.id.overlay_quick_skip_position_reset)
-        rowQuickSkipPosition?.setOnClickListener { skipPositionPicker.show() }
+        rowQuickSkipPosition?.setOnClickListener { skipPositionPicker.show(PickerTarget.SKIP) }
         spReset?.setOnClickListener { settingsRepository.resetQuickSkipPosition() }
+        rowBlackPosition = root.findViewById(R.id.overlay_row_black_position)
+        blackPosStatus = root.findViewById(R.id.overlay_black_position_status)
+        blackPosReset = root.findViewById(R.id.overlay_black_position_reset)
+        rowBlackPosition?.setOnClickListener { skipPositionPicker.show(PickerTarget.BLACK) }
+        blackPosReset?.setOnClickListener { settingsRepository.resetBlackScreenPosition() }
         rowClickTempo = root.findViewById(R.id.overlay_row_click_tempo)
         ctStatus = root.findViewById(R.id.overlay_click_tempo_status)
         rowClickTempo?.setOnClickListener { clickTempoPanel.show() }
@@ -424,6 +436,9 @@ class OverlayWindowController(
         switchQuickSkip = null
         skipPositionPicker.hide()
         clickTempoPanel.hide()
+        rowBlackPosition = null
+        blackPosStatus = null
+        blackPosReset = null
         rowClickTempo = null
         ctStatus = null
         rowQuickSkipPosition = null

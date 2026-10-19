@@ -20,6 +20,9 @@ import com.bettergi.pocket.trigger.screenBottomCenter
  *
  * 从 OverlayWindowController 拆出的独立组件：负责取点面板的显示/隐藏/十字线/百分比预览/落盘。
  */
+/** 取点目标：两种点击各自拥有独立的附加点配置 */
+enum class PickerTarget { SKIP, BLACK }
+
 class SkipPositionPicker(
     private val themedContext: Context,
     private val windowManager: WindowManager,
@@ -45,17 +48,28 @@ class SkipPositionPicker(
         const val SEEK_PROGRESS_MAX = 90
     }
 
+    private var target: PickerTarget = PickerTarget.SKIP
     private var tempX: Float = 0.5f
     private var tempY: Float = 0.99f
 
     val isVisible: Boolean get() = pickerView != null
 
-    fun show() {
+    fun show(target: PickerTarget = PickerTarget.SKIP) {
         if (pickerView != null) return
+        this.target = target
         val screen = screenSize()
         val settings = settingsRepository.get()
-        tempX = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionX else 0.5f).coerceIn(SEEK_MIN, SEEK_MAX)
-        tempY = (if (settings.quickSkipCustomPosition) settings.quickSkipPositionY else 0.7f).coerceIn(SEEK_MIN, SEEK_MAX)
+        val custom = if (target == PickerTarget.SKIP) {
+            settings.quickSkipCustomPosition
+        } else {
+            settings.blackScreenCustomPosition
+        }
+        val savedX = if (target == PickerTarget.SKIP) settings.quickSkipPositionX else settings.blackScreenPositionX
+        val savedY = if (target == PickerTarget.SKIP) settings.quickSkipPositionY else settings.blackScreenPositionY
+        // 未设置时给一个与固定点明显错开的初始位置, 提示这是可拖动的第二个点
+        val defaultY = if (target == PickerTarget.SKIP) 0.7f else 0.35f
+        tempX = (if (custom) savedX else 0.5f).coerceIn(SEEK_MIN, SEEK_MAX)
+        tempY = (if (custom) savedY else defaultY).coerceIn(SEEK_MIN, SEEK_MAX)
 
         val container = FrameLayout(themedContext)
         val crosshair = View(themedContext).apply {
@@ -129,10 +143,18 @@ class SkipPositionPicker(
                 }
             },
         ).attach(dragHandle)
+        picker.findViewById<TextView>(R.id.sp_picker_title)?.text = when (target) {
+            PickerTarget.SKIP -> "选择对话跳过附加点"
+            PickerTarget.BLACK -> "选择黑屏点击附加点"
+        }
         picker.findViewById<View>(R.id.sp_picker_close).setOnClickListener { hide() }
         picker.findViewById<View>(R.id.sp_picker_cancel).setOnClickListener { hide() }
         picker.findViewById<View>(R.id.sp_picker_ok).setOnClickListener {
-            settingsRepository.setQuickSkipPosition(tempX, tempY)
+            if (target == PickerTarget.SKIP) {
+                settingsRepository.setQuickSkipPosition(tempX, tempY)
+            } else {
+                settingsRepository.setBlackScreenPosition(tempX, tempY)
+            }
             hide()
         }
         picker.findViewById<View>(R.id.sp_picker_test).setOnClickListener {
@@ -210,7 +232,10 @@ class SkipPositionPicker(
         val screen = screenSize()
         crosshairView?.translationX = tempX * screen.first - screen.first / 2f
         crosshairView?.translationY = tempY * screen.second - screen.second / 2f
-        val (fx, fy) = screenBottomCenter(screen.first, screen.second)
+        val (fx, fy) = when (target) {
+            PickerTarget.SKIP -> screenBottomCenter(screen.first, screen.second)
+            PickerTarget.BLACK -> screen.first / 2 to screen.second / 2
+        }
         fixedMarkerView?.translationX = fx - screen.first / 2f
         fixedMarkerView?.translationY = fy - screen.second / 2f
     }

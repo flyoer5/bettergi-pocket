@@ -82,6 +82,21 @@ class TriggerSettingsRepository(context: Context) {
         update { it.copy(quickSkipCustomPosition = false) }
     }
 
+    fun setBlackScreenPosition(x: Float, y: Float) {
+        update {
+            it.copy(
+                blackScreenCustomPosition = true,
+                blackScreenPositionX = x.coerceIn(0.05f, 0.99f),
+                blackScreenPositionY = y.coerceIn(0.05f, 0.99f),
+            )
+        }
+    }
+
+    /** 仅关闭黑屏附加点，保留已保存坐标 */
+    fun resetBlackScreenPosition() {
+        update { it.copy(blackScreenCustomPosition = false) }
+    }
+
     fun setSkipClickInterval(ms: Int) {
         update { it.copy(skipClickIntervalMs = ms.coerceIn(SKIP_CLICK_MIN, SKIP_CLICK_MAX)) }
     }
@@ -117,6 +132,9 @@ class TriggerSettingsRepository(context: Context) {
                 .putBoolean(KEY_QUICK_SKIP_CUSTOM, updated.quickSkipCustomPosition)
                 .putFloat(KEY_QUICK_SKIP_X, updated.quickSkipPositionX)
                 .putFloat(KEY_QUICK_SKIP_Y, updated.quickSkipPositionY)
+                .putBoolean(KEY_BLACK_CUSTOM, updated.blackScreenCustomPosition)
+                .putFloat(KEY_BLACK_X, updated.blackScreenPositionX)
+                .putFloat(KEY_BLACK_Y, updated.blackScreenPositionY)
                 .putInt(KEY_SKIP_CLICK_MS, updated.skipClickIntervalMs)
                 .putInt(KEY_BLACK_CLICK_MS, updated.blackClickIntervalMs)
                 .apply()
@@ -143,6 +161,9 @@ class TriggerSettingsRepository(context: Context) {
         quickSkipCustomPosition = prefs.getBoolean(KEY_QUICK_SKIP_CUSTOM, false),
         quickSkipPositionX = prefs.getFloat(KEY_QUICK_SKIP_X, 0.5f),
         quickSkipPositionY = prefs.getFloat(KEY_QUICK_SKIP_Y, 0.99f),
+        blackScreenCustomPosition = prefs.getBoolean(KEY_BLACK_CUSTOM, false),
+        blackScreenPositionX = prefs.getFloat(KEY_BLACK_X, 0.5f),
+        blackScreenPositionY = prefs.getFloat(KEY_BLACK_Y, 0.5f),
         skipClickIntervalMs = prefs.getInt(KEY_SKIP_CLICK_MS, 500)
             .coerceIn(SKIP_CLICK_MIN, SKIP_CLICK_MAX),
         blackClickIntervalMs = prefs.getInt(KEY_BLACK_CLICK_MS, 1200)
@@ -162,6 +183,9 @@ class TriggerSettingsRepository(context: Context) {
         const val KEY_QUICK_SKIP_CUSTOM = "quickSkipCustomPosition"
         const val KEY_QUICK_SKIP_X = "quickSkipPositionX"
         const val KEY_QUICK_SKIP_Y = "quickSkipPositionY"
+        const val KEY_BLACK_CUSTOM = "blackScreenCustomPosition"
+        const val KEY_BLACK_X = "blackScreenPositionX"
+        const val KEY_BLACK_Y = "blackScreenPositionY"
         const val KEY_SKIP_CLICK_MS = "skipClickIntervalMs"
         const val KEY_BLACK_CLICK_MS = "blackClickIntervalMs"
 
