@@ -123,11 +123,46 @@ object RootBridge {
         val dm = ctx.resources.displayMetrics
         val scrW = minOf(dm.widthPixels, dm.heightPixels)
         val scrH = maxOf(dm.widthPixels, dm.heightPixels)
-        val cmd = "$su -c \"$helper --server --sock $sockPath --uid ${android.os.Process.myUid()} --app-pid ${android.os.Process.myPid()} --w $scrW --h $scrH\""
+        val inner = "$helper --server --sock $sockPath --uid ${android.os.Process.myUid()} --app-pid ${android.os.Process.myPid()} --w $scrW --h $scrH"
+
+        val ver = try {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+        } catch (_: Exception) {
+            "?"
+        }
+        AppLog.i(TAG, "连接 root helper v$ver，su=$su")
+        // 先做一次廉价 su 探测。若 su 卡在管理器授权/等待上，后面用哪种方式
+        // 启动都会超时；先把探测结果打进日志，真机上一眼能分清是 su 的问题
+        // 还是 helper 的问题（被拒会在上方另有一行「命令失败(exit=N)」）。
+        val probe = runCommand(ctx, "$su -c 'echo BG_SU_OK'", 3000L)?.trim()
+        AppLog.i(TAG, "su 探测: ${if (probe == "BG_SU_OK") "正常" else "异常（超时无响应或被拒）"}")
+
+        // 方式 A：直接 exec su，不套 sh -c、不嵌套引号，排除包装层/引号问题
+        if (tryLaunch("A", sockPath) {
+                ProcessBuilder(su, "-c", inner).redirectErrorStream(false).start()
+            }
+        ) return true
+        // 方式 B：传统 sh -c 包装（旧版路径，兜底）
+        if (tryLaunch("B", sockPath) {
+                ProcessBuilder("sh", "-c", "$su -c \"$inner\"").redirectErrorStream(false).start()
+            }
+        ) return true
+        AppLog.e(TAG, "root helper 启动失败（两种方式均未连上）")
+        cleanupResources()
+        return false
+    }
+
+    /**
+     * 用给定方式拉起一个 helper 进程并等待握手。
+     * 成功返回 true；失败时只销毁本进程、不做全局清理（不触发 /proc 残留扫描，
+     * 避免它误伤紧接着的下一种启动方式），由调用方决定重试或收尾。
+     */
+    private fun tryLaunch(tag: String, sockPath: String, startProcess: () -> Process): Boolean {
+        AppLog.i(TAG, "启动 helper（方式 $tag）")
         val process = try {
-            ProcessBuilder("sh", "-c", cmd).redirectErrorStream(false).start()
+            startProcess()
         } catch (e: Exception) {
-            AppLog.e(TAG, "启动 helper 失败", e)
+            AppLog.e(TAG, "启动 helper 失败（方式 $tag）", e)
             return false
         }
         helperProcess = process
@@ -138,8 +173,8 @@ object RootBridge {
         while (System.currentTimeMillis() < deadline) {
             Thread.sleep(60)
             if (!process.isAlive) {
-                AppLog.e(TAG, "helper 提前退出，code=${process.exitValue()}")
-                cleanupResources()
+                AppLog.e(TAG, "helper 提前退出（方式 $tag），code=${process.exitValue()}")
+                helperProcess = null
                 return false
             }
             val s = tryConnect(sockPath, logFailure = firstFail).also { if (it == null) firstFail = false } ?: continue
@@ -154,12 +189,19 @@ object RootBridge {
                 applyKeepAlive()
                 return true
             }
-            AppLog.w(TAG, "PING 握手失败: $pong")
-            cleanupResources()
+            AppLog.w(TAG, "PING 握手失败（方式 $tag）: $pong")
+            try {
+                connection?.socket?.close()
+            } catch (_: Exception) {
+            }
+            connection = null
+            process.destroyForcibly()
+            helperProcess = null
             return false
         }
-        AppLog.e(TAG, "连接 helper 超时")
-        cleanupResources()
+        AppLog.e(TAG, "连接 helper 超时（方式 $tag，进程存活=${process.isAlive}）")
+        process.destroyForcibly()
+        helperProcess = null
         return false
     }
 
@@ -418,7 +460,9 @@ object RootBridge {
                 try {
                     stream.bufferedReader().useLines { lines ->
                         lines.forEach { line ->
-                            if (line.isNotBlank()) AppLog.d(TAG, "[$prefix] $line")
+                            // INFO 而非 DEBUG：悬浮窗日志窗会过滤 DEBUG，排障时
+                            // 必须能在界面上直接看到 helper 的原话
+                            if (line.isNotBlank()) AppLog.i(TAG, "[$prefix] $line")
                         }
                     }
                 } catch (_: Throwable) {
