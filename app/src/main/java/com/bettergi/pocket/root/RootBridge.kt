@@ -116,7 +116,14 @@ object RootBridge {
         // 等不到也不阻塞启动（超过 1.2s 属于异常慢，继续走后续流程）。
         waitPreviousKill()
 
-        val cmd = "$su -c \"$helper --server --sock $sockPath --uid ${android.os.Process.myUid()} --app-pid ${android.os.Process.myPid()}\""
+        // 带 --w/--h（竖屏物理尺寸，与 `wm size` 输出口径一致）：app 本来就知道
+        // 分辨率，没必要让 helper 再跑一遍 wm size 探测。个别设备上 wm 在 root
+        // 环境里卡住时，探测会把 socket 的创建无限拖后，app 侧只表现为
+        // 「连接 helper 超时」且无任何 helper 输出。
+        val dm = ctx.resources.displayMetrics
+        val scrW = minOf(dm.widthPixels, dm.heightPixels)
+        val scrH = maxOf(dm.widthPixels, dm.heightPixels)
+        val cmd = "$su -c \"$helper --server --sock $sockPath --uid ${android.os.Process.myUid()} --app-pid ${android.os.Process.myPid()} --w $scrW --h $scrH\""
         val process = try {
             ProcessBuilder("sh", "-c", cmd).redirectErrorStream(false).start()
         } catch (e: Exception) {

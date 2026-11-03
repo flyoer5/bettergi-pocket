@@ -34,6 +34,7 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 #include <signal.h>
+#include <poll.h>
 #include <sys/select.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -144,18 +145,36 @@ static int shell_capture(const char *cmd, char *out, size_t out_sz) {
 
     close(fds[1]);
     size_t used = 0;
+    /* 读管道必须带超时：子进程卡死（如个别设备上 wm size 在 root 环境
+       迟迟不返回、或管道写端被孙进程继承不关）时，无限等 EOF 会把调用方
+       一起陪葬——detect_screen 卡住意味着 server 的 socket 永远建不出来，
+       app 侧只会看到连接超时。超时后强杀子进程并按失败返回，
+       调用方走各自的兜底路径（如默认分辨率）。 */
+    const long deadline = now_ms() + 2500;
+    int timed_out = 0;
     for (;;) {
+        if (used >= out_sz - 1) break;
+        long remain = deadline - now_ms();
+        if (remain <= 0) { timed_out = 1; break; }
+        struct pollfd pfd = { .fd = fds[0], .events = POLLIN };
+        int pr = poll(&pfd, 1, (int)remain);
+        if (pr == 0) { timed_out = 1; break; }
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
         ssize_t n = read(fds[0], out + used, out_sz - 1 - used);
         if (n <= 0) break;
         used += (size_t)n;
-        if (used >= out_sz - 1) break;
     }
     out[used] = '\0';
     /* 先关读端再 waitpid：输出超过缓冲时子进程写管道会拿到 EPIPE 立即退出，不会死等 */
     close(fds[0]);
+    if (timed_out) kill(pid, SIGKILL);
 
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) return -1;
+    if (timed_out) return -1;
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
