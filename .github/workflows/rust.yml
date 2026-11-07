@@ -81,3 +81,50 @@ jobs:
           name: bgroot-aarch64
           path: rust/target/aarch64-linux-android/release/bgroot
           if-no-files-found: error
+
+  apk:
+    name: apk (rust bgroot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+      - name: cargo build (aarch64-linux-android)
+        working-directory: rust
+        env:
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
+        run: cargo build --release -p bg-helper --target aarch64-linux-android
+      - name: strip + 替换 assets 里的 helper
+        run: |
+          STRIP="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          "$STRIP" -s rust/target/aarch64-linux-android/release/bgroot
+          cp rust/target/aarch64-linux-android/release/bgroot app/src/main/assets/root/arm64-v8a/bgroot
+          chmod +x app/src/main/assets/root/arm64-v8a/bgroot
+          ls -l app/src/main/assets/root/arm64-v8a/bgroot
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Accept Android SDK licenses
+        run: |
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          fi
+      - name: Assemble debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bettergi-pocket-debug-rust-helper
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
