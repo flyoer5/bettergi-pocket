@@ -103,6 +103,7 @@ jobs:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
         run: cargo build --release -p bg-helper --target aarch64-linux-android
       - name: strip + 替换 assets 里的 helper
+        working-directory: .
         run: |
           STRIP="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           "$STRIP" -s rust/target/aarch64-linux-android/release/bgroot
@@ -115,11 +116,13 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
       - name: Accept Android SDK licenses
+        working-directory: .
         run: |
           if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
           fi
       - name: Assemble debug APK
+        working-directory: .
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
