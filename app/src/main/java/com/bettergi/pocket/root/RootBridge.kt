@@ -125,7 +125,12 @@ object RootBridge {
         val dm = ctx.resources.displayMetrics
         val scrW = minOf(dm.widthPixels, dm.heightPixels)
         val scrH = maxOf(dm.widthPixels, dm.heightPixels)
-        val inner = "$helper --stdio --uid ${android.os.Process.myUid()}" +
+        // su 域不能 exec app 私有目录里的文件（SELinux 禁止 execute app_data_file），
+        // 所以先由 su 把它复制到 /data/local/tmp（shell_data_file，su 可执行）再运行。
+        // 该目录 0771 shell:shell，普通应用无写权限，替换不了这个文件。
+        val tmpHelper = "/data/local/tmp/bettergi_bgroot"
+        val inner = "cp $helper $tmpHelper && chmod 700 $tmpHelper && exec $tmpHelper --stdio" +
+            " --uid ${android.os.Process.myUid()}" +
             " --app-pid ${android.os.Process.myPid()} --w $scrW --h $scrH"
 
         val ver = try {
