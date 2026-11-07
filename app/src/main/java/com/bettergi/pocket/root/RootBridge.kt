@@ -1,19 +1,19 @@
 package com.bettergi.pocket.root
 
 import android.content.Context
-import android.net.LocalSocket
-import android.net.LocalSocketAddress
 import com.bettergi.pocket.log.AppLog
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
 import java.io.OutputStream
-import java.net.SocketTimeoutException
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * root 注入桥：探测 su、释放并启动 bgroot helper、经 LocalSocket 通信。
+ * root 注入桥：探测 su、释放并启动 bgroot helper、经**进程管道**通信。
+ *
+ * 为什么不再用 Unix socket：Android 16 + KernelSU 下，app（untrusted_app 域）连接
+ * root 进程创建的 socket 会被 SELinux 的 `connectto` 检查拒绝（EACCES），
+ * 即使文件已 0600 + chown 到 app uid。改用子进程继承的 stdin/stdout 管道，
+ * 不经过这条检查，行为也更简单。
  *
  * 设计要点：
  * - 不绑定任何 root 方案（Magisk / KernelSU / APatch / 原生 su 均走通用 su 探测）
@@ -33,20 +33,26 @@ object RootBridge {
     /** 持久 su shell 的完成标记前缀（形如 __BGD_12__，用于统计积压） */
     private const val SHELL_SENTINEL = "__BGD_"
     private val SHELL_SENTINEL_RE = Regex("__BGD_(\\d+)__")
+
     /** 允许的在途命令数上限；超过说明 shell 卡住（如 input 被阻塞），需要重建 */
     private const val SHELL_MAX_PENDING = 3
 
     @Volatile
     private var running = false
-    /** 连接对象：socket + 输出流 + 读缓冲，整体替换避免撕裂读 */
+
+    /**
+     * 连接对象：helper 进程 + 写入管道 + 响应队列。
+     * 响应队列由独立线程喂，避免 request 阻塞在 readLine 上无法超时。
+     */
     private class Connection(
-        val socket: LocalSocket,
+        val process: Process,
         val output: OutputStream,
-        val reader: BufferedReader,
+        val responses: LinkedBlockingQueue<String>,
     )
 
     @Volatile
     private var connection: Connection? = null
+
     @Volatile
     private var helperProcess: Process? = null
 
@@ -73,17 +79,20 @@ object RootBridge {
     private var shellAllowed = true
 
     private var appContext: Context? = null
+
     @Volatile
     private var suPath: String? = null
+
     @Volatile
     private var uinputUnavailable = false
 
     @Volatile
     private var userStopped = false
     private val reconnectPending = java.util.concurrent.atomic.AtomicBoolean(false)
+
     @Volatile
     private var consecutiveFailures = 0
-    private val reconnectExecutor = Executors.newSingleThreadScheduledExecutor { r ->
+    private val reconnectExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "bg-root-reconnect").apply { isDaemon = true }
     }
 
@@ -106,24 +115,18 @@ object RootBridge {
         if (!releaseHelper(helper)) return false
         helper.setExecutable(true, false)
 
-        val sockPath = File(dir, "sock").absolutePath
-        File(sockPath).delete()
-
         val su = resolveSu()
         // 清理残留 helper 由 cleanupResources() 统一处理（它已起后台 kill 线程）。
         // 这里必须等它结束再启动新 helper：否则上一轮 kill 线程可能在几秒后才执行，
         // 正好杀掉刚握手成功的新 helper，表现为"连上就断"的重连风暴。
-        // 等不到也不阻塞启动（超过 1.2s 属于异常慢，继续走后续流程）。
         waitPreviousKill()
 
-        // 带 --w/--h（竖屏物理尺寸，与 `wm size` 输出口径一致）：app 本来就知道
-        // 分辨率，没必要让 helper 再跑一遍 wm size 探测。个别设备上 wm 在 root
-        // 环境里卡住时，探测会把 socket 的创建无限拖后，app 侧只表现为
-        // 「连接 helper 超时」且无任何 helper 输出。
+        // 带 --w/--h（竖屏物理尺寸）：app 本来就知道分辨率，没必要让 helper 再跑 wm size。
         val dm = ctx.resources.displayMetrics
         val scrW = minOf(dm.widthPixels, dm.heightPixels)
         val scrH = maxOf(dm.widthPixels, dm.heightPixels)
-        val inner = "$helper --server --sock $sockPath --uid ${android.os.Process.myUid()} --app-pid ${android.os.Process.myPid()} --w $scrW --h $scrH"
+        val inner = "$helper --stdio --uid ${android.os.Process.myUid()}" +
+            " --app-pid ${android.os.Process.myPid()} --w $scrW --h $scrH"
 
         val ver = try {
             ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
@@ -138,13 +141,13 @@ object RootBridge {
         AppLog.i(TAG, "su 探测: ${if (probe == "BG_SU_OK") "正常" else "异常（超时无响应或被拒）"}")
 
         // 方式 A：直接 exec su，不套 sh -c、不嵌套引号，排除包装层/引号问题
-        if (tryLaunch("A", sockPath) {
-                ProcessBuilder(su, "-c", inner).redirectErrorStream(false).start()
+        if (tryLaunch("A") {
+                ProcessBuilder(su, "-c", inner).start()
             }
         ) return true
         // 方式 B：传统 sh -c 包装（旧版路径，兜底）
-        if (tryLaunch("B", sockPath) {
-                ProcessBuilder("sh", "-c", "$su -c \"$inner\"").redirectErrorStream(false).start()
+        if (tryLaunch("B") {
+                ProcessBuilder("sh", "-c", "$su -c \"$inner\"").start()
             }
         ) return true
         AppLog.e(TAG, "root helper 启动失败（两种方式均未连上）")
@@ -153,11 +156,11 @@ object RootBridge {
     }
 
     /**
-     * 用给定方式拉起一个 helper 进程并等待握手。
+     * 用给定方式拉起 helper 进程并等待 PING 握手。
      * 成功返回 true；失败时只销毁本进程、不做全局清理（不触发 /proc 残留扫描，
      * 避免它误伤紧接着的下一种启动方式），由调用方决定重试或收尾。
      */
-    private fun tryLaunch(tag: String, sockPath: String, startProcess: () -> Process): Boolean {
+    private fun tryLaunch(tag: String, startProcess: () -> Process): Boolean {
         AppLog.i(TAG, "启动 helper（方式 $tag）")
         val process = try {
             startProcess()
@@ -166,42 +169,51 @@ object RootBridge {
             return false
         }
         helperProcess = process
-        drainHelperOutput(process, "helper")
+        drainHelperError(process)
+
+        val responses = LinkedBlockingQueue<String>()
+        Thread({
+            try {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { responses.offer(it) }
+                }
+            } catch (_: Throwable) {
+                // 进程被杀导致的读流异常：忽略
+            } finally {
+                if (running) markDisconnected("helper 输出结束")
+            }
+        }, "bg-helper-out").apply { isDaemon = true }.start()
+
+        val conn = Connection(process, process.outputStream, responses)
+        connection = conn
 
         val deadline = System.currentTimeMillis() + CONNECT_TIMEOUT_MS
-        var firstFail = true
         while (System.currentTimeMillis() < deadline) {
-            Thread.sleep(60)
             if (!process.isAlive) {
                 AppLog.e(TAG, "helper 提前退出（方式 $tag），code=${process.exitValue()}")
-                helperProcess = null
+                abortConnection("helper 退出")
                 return false
             }
-            val s = tryConnect(sockPath, logFailure = firstFail).also { if (it == null) firstFail = false } ?: continue
-            connection = Connection(s, s.outputStream, BufferedReader(InputStreamReader(s.inputStream), 1024))
-            val pong = request("PING", PING_TIMEOUT_MS)?.trim()
+            val pong = try {
+                conn.output.write("PING\n".toByteArray(Charsets.UTF_8))
+                conn.output.flush()
+                responses.poll(600, TimeUnit.MILLISECONDS)?.trim()
+            } catch (e: Exception) {
+                AppLog.w(TAG, "PING 写入失败（方式 $tag）: ${e.message}")
+                null
+            }
             if (pong == "OK pong" || pong == "pong") {
                 running = true
                 userStopped = false
                 consecutiveFailures = 0
                 uinputUnavailable = false
-                AppLog.i(TAG, "root 已连接")
+                AppLog.i(TAG, "root 已连接（stdio 管道）")
                 applyKeepAlive()
                 return true
             }
-            AppLog.w(TAG, "PING 握手失败（方式 $tag）: $pong")
-            try {
-                connection?.socket?.close()
-            } catch (_: Exception) {
-            }
-            connection = null
-            process.destroyForcibly()
-            helperProcess = null
-            return false
         }
         AppLog.e(TAG, "连接 helper 超时（方式 $tag，进程存活=${process.isAlive}）")
-        process.destroyForcibly()
-        helperProcess = null
+        abortConnection("握手超时")
         return false
     }
 
@@ -253,58 +265,42 @@ object RootBridge {
         }
     }
 
-    private fun tryConnect(path: String, logFailure: Boolean = false): LocalSocket? {
-        var s: LocalSocket? = null
-        return try {
-            s = LocalSocket()
-            s.connect(LocalSocketAddress(path, LocalSocketAddress.Namespace.FILESYSTEM))
-            s
-        } catch (e: Exception) {
-            // 连接失败必须 close，避免 LocalSocket fd 泄漏
-            runCatching { s?.close() }
-            if (logFailure) AppLog.w(TAG, "连接 $path 失败: ${e.message}")
-            null
-        }
-    }
-
     /**
-     * 发送一行指令并读取一行回复。
-     * - 请求超时（SocketTimeoutException）：单次请求失败，不影响连接状态，返回 null
-     * - 对端关闭/IO 异常：连接级失败，标记断开并触发自动重连，返回 null
+     * 发送一行指令并等待一行回复。
+     * - 请求超时：关掉连接交给重连重建干净的流（协议无状态，迟到响应会错位）
+     * - 写失败/进程退出：连接级失败，标记断开
      */
     @Synchronized
     fun request(cmd: String, timeoutMs: Long = 5000L): String? {
         val conn = connection ?: return null
         return try {
-            conn.socket.soTimeout = timeoutMs.toInt()
             conn.output.write((cmd + "\n").toByteArray(Charsets.UTF_8))
             conn.output.flush()
-            val line = conn.reader.readLine() ?: run {
-                markDisconnected("对端关闭")
+            val line = conn.responses.poll(timeoutMs, TimeUnit.MILLISECONDS)
+            if (line == null) {
+                AppLog.w(TAG, "request 超时: $cmd")
+                abortConnection("request 超时: $cmd")
                 null
+            } else {
+                line
             }
-            line
-        } catch (e: SocketTimeoutException) {
-            AppLog.w(TAG, "request 超时: $cmd")
-            // 超时后流状态不可信：迟到的回复可能已落入 BufferedReader 内部缓冲，
-            // 从 socket 层清残留碰不到它，会让后续每条指令的响应错位一格。
-            // 协议无状态，直接关连接交给重连重建干净的流。
-            abortConnection("request 超时: $cmd")
-            null
         } catch (e: Exception) {
             AppLog.w(TAG, "request failed: $cmd -> ${e.message}")
-            markDisconnected("request 异常: ${e.message}")
+            abortConnection("request 异常: ${e.message}")
             null
         }
     }
 
     /**
-     * 连接不可恢复时立即废弃：关闭 socket 并置空连接，触发重连。
-     * 与 markDisconnected 的区别是连底层 fd 一起丢弃，避免残留连接继续被复用。
+     * 连接不可恢复时立即废弃：关闭进程并置空连接，触发重连。
      */
     private fun abortConnection(reason: String) {
         try {
-            connection?.socket?.close()
+            connection?.output?.close()
+        } catch (_: Throwable) {
+        }
+        try {
+            connection?.process?.destroyForcibly()
         } catch (_: Throwable) {
         }
         connection = null
@@ -322,7 +318,7 @@ object RootBridge {
 
     /**
      * 点击注入：input 命令优先（InputManager 正规管线，复用真实触摸屏 deviceId，
-     * 原神等米哈游引擎认可）；uinput 虚拟设备会被游戏过滤（实测点击光圈出现但无响应），仅作回退。
+     * 原神等米哈游引擎认可）；uinput 虚拟设备会被游戏过滤，仅作回退。
      */
     fun inputTap(x: Int, y: Int): Boolean {
         val ctx = appContext ?: return false
@@ -330,29 +326,29 @@ object RootBridge {
         // 回退：一次性执行（含退出码校验）
         val cmd = "${resolveSu()} -c \"input tap $x $y\""
         if (runCommand(ctx, cmd, 2500L) != null) return true
-        AppLog.w(TAG, "input 注入失败 ($x,$y)，尝试 uinput 回退")
+        AppLog.w(TAG, "input 注入失败 ($x,$y)，尝试 helper 回退")
         if (!uinputUnavailable) {
             val resp = request("TAP $x $y 60", 1500L)
             if (resp != null) {
                 if (resp.startsWith("OK")) return true
-                if (resp.startsWith("ERR uinput")) uinputUnavailable = true
+                if (resp.startsWith("ERR")) uinputUnavailable = true
             }
         }
         return false
     }
 
-    /** 返回键注入：input 命令优先，socket BACK 仅作回退。 */
+    /** 返回键注入：input 命令优先，helper BACK 仅作回退。 */
     fun inputBack(): Boolean {
         val ctx = appContext ?: return false
         if (execInShell("input keyevent 4")) return true
         val cmd = "${resolveSu()} -c \"input keyevent 4\""
         if (runCommand(ctx, cmd, 2500L) != null) return true
-        AppLog.w(TAG, "input 返回键失败，尝试 socket BACK 回退")
+        AppLog.w(TAG, "input 返回键失败，尝试 helper 回退")
         if (!uinputUnavailable) {
             val resp = request("BACK", 1500L)
             if (resp != null) {
                 if (resp.startsWith("OK")) return true
-                if (resp.startsWith("ERR uinput")) uinputUnavailable = true
+                if (resp.startsWith("ERR")) uinputUnavailable = true
             }
         }
         return false
@@ -386,17 +382,18 @@ object RootBridge {
         } catch (_: Exception) {
         }
         try {
-            connection?.socket?.close()
+            connection?.output?.close()
         } catch (_: Exception) {
         }
         try {
             // helperProcess 是 su 包装进程（bgroot 是其子进程），强杀进程树避免 bgroot 残留
+            connection?.process?.destroyForcibly()
             helperProcess?.destroyForcibly()
         } catch (_: Exception) {
         }
-        // 兜底：QUIT 未送达（socket 已断）时强杀残留 helper，保证退出后系统干净、覆盖安装不被拖慢。
+        // 兜底：QUIT 未送达（管道已断）时强杀残留 helper，保证退出后系统干净、覆盖安装不被拖慢。
         // 进程名 bgroot 仅本 app 使用，按 /proc/*/comm 精确匹配安全。
-        // 异步执行：全 /proc 扫描 + su 启动可能耗时数秒, 不阻塞调用方（stop/start 主线程调用时避免卡 UI/悬浮窗残留）
+        // 异步执行：全 /proc 扫描 + su 启动可能耗时数秒, 不阻塞调用方。
         val su = suPath
         val ctx = appContext
         if (su != null && ctx != null) {
@@ -453,24 +450,23 @@ object RootBridge {
         }, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS)
     }
 
-    /** 逐行消费 helper 的 stdout/stderr：写满管道会阻塞 helper 主循环，必须读 */
-    private fun drainHelperOutput(process: Process, prefix: String) {
-        for (stream in listOf(process.inputStream, process.errorStream)) {
-            val thread = Thread {
-                try {
-                    stream.bufferedReader().useLines { lines ->
-                        lines.forEach { line ->
-                            // INFO 而非 DEBUG：悬浮窗日志窗会过滤 DEBUG，排障时
-                            // 必须能在界面上直接看到 helper 的原话
-                            if (line.isNotBlank()) AppLog.i(TAG, "[$prefix] $line")
-                        }
+    /** 逐行消费 helper 的 stderr：写满管道会阻塞 helper，必须读；stdout 已归协议通道。 */
+    private fun drainHelperError(process: Process) {
+        Thread {
+            try {
+                process.errorStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        // INFO 而非 DEBUG：悬浮窗日志窗会过滤 DEBUG，排障时
+                        // 必须能在界面上直接看到 helper 的原话
+                        if (line.isNotBlank()) AppLog.i(TAG, "[helper] $line")
                     }
-                } catch (_: Throwable) {
                 }
+            } catch (_: Throwable) {
             }
-            thread.isDaemon = true
-            thread.start()
-        }
+        }.apply {
+            isDaemon = true
+            name = "bg-helper-err"
+        }.start()
     }
 
     /**
@@ -551,9 +547,8 @@ object RootBridge {
      * 执行 shell 命令并收集输出。
      *
      * 注意：读流必须异步。su 守护进程挂死或弹授权框时，inputStream 永不 EOF，
-     * 若先 readText() 再 waitFor(timeout)，超时判定永远执行不到，调用线程会被无限阻塞
-     * （这条路径是自动点击主链路，卡住等于 AutoSkip 静默停摆）。
-     * 因此：先 waitFor(timeout) 判生死，超时 destroyForcibly + 中断读线程并返回 null（视为失败）。
+     * 若先 readText() 再 waitFor(timeout)，超时判定永远执行不到，调用线程会被无限阻塞。
+     * 因此：先 waitFor(timeout) 判生死，超时 destroyForcibly + 中断读线程并返回 null。
      */
     private fun runCommand(ctx: Context, command: String, timeoutMs: Long): String? {
         val proc = try {
@@ -586,11 +581,7 @@ object RootBridge {
                 readerThread.interrupt()
                 null
             } else {
-                readerThread.join(300)   // 进程已退出，读线程随即结束；短暂等待保证输出完整
-                // 退出码非 0 一律视为失败并返回 null：
-                // 例：Magisk DenyList 隐藏 su 时 `sh -c "su -c input tap"` 退出 127，
-                // 旧实现只判"进程能启动"就返回非 null，inputTap 会误报成功，
-                // AutoSkip 于是持续"点击成功"却毫无效果（且永远不会触发重试逻辑）。
+                readerThread.join(300)
                 val exit = proc.exitValue()
                 if (exit != 0) {
                     AppLog.w(TAG, "命令失败(exit=$exit): ${command.take(80)}")

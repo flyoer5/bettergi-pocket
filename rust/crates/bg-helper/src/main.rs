@@ -16,15 +16,18 @@ fn main() {
         return;
     }
 
-    if !options.server || options.sock.is_none() {
-        if options.help {
-            eprintln!("{USAGE}");
-        } else {
-            eprintln!("ERR only --server mode is supported\n{USAGE}");
-        }
-        std::process::exit(1);
+    if options.stdio {
+        std::process::exit(bg_helper::server::run_stdio(&options));
     }
 
-    let code = bg_helper::server::run_server(&options);
-    std::process::exit(code);
+    if options.server && options.sock.is_some() {
+        std::process::exit(bg_helper::server::run_server(&options));
+    }
+
+    if options.help {
+        eprintln!("{USAGE}");
+    } else {
+        eprintln!("ERR 需要 --stdio 或 --server --sock PATH\n{USAGE}");
+    }
+    std::process::exit(1);
 }

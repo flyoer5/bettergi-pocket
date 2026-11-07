@@ -286,6 +286,56 @@ fn handle_connection(helper: &Helper<'_>, stream: &UnixStream) -> std::io::Resul
     }
 }
 
+/// 用 stdin/stdout 跑协议，不建 socket。
+///
+/// 为什么需要：Android 16 + KernelSU 下，app（untrusted_app 域）连接 root 进程创建的
+/// Unix socket 会被 SELinux 的 `connectto` 检查拒绝（EACCES），即使文件已经是 0600 +
+/// chown 到 app uid。子进程继承的管道不经过这条检查，所以用 stdio 更稳。
+///
+/// 约定：stdin 收请求、stdout 只回协议响应、stderr 走日志（app 会读 stderr 打日志）。
+pub fn run_stdio(options: &Options) -> i32 {
+    let shell = Shell::detect().unwrap_or_else(|| Shell::new(crate::shell::SHELL_CANDIDATES[0]));
+    eprintln!("OK shell {}", shell.path());
+
+    let screen = options
+        .screen()
+        .or_else(|| detect_screen(&shell))
+        .unwrap_or(Size::new(1080, 2400));
+    eprintln!("OK screen {}x{}", screen.width, screen.height);
+
+    let helper = Helper::new(&shell, screen);
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match stdin.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(err) => {
+                eprintln!("ERR read stdin: {err}");
+                return 2;
+            }
+        }
+        let command = line
+            .trim_end_matches(|c| c == '\r' || c == '\n')
+            .to_string();
+        eprintln!("cmd: {command}");
+        let (response, quit) = helper.handle_line(&command);
+        if stdout.write_all(response.as_bytes()).is_err() {
+            break;
+        }
+        if stdout.flush().is_err() {
+            break;
+        }
+        if quit {
+            break;
+        }
+    }
+    eprintln!("OK bye");
+    0
+}
+
 fn detect_screen(shell: &Shell) -> Option<Size> {
     let output = shell.run("wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -1")?;
     crate::args::parse_screen_size(&output)

@@ -8,6 +8,9 @@ use bg_core::Size;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Options {
     pub server: bool,
+    /// 用 stdin/stdout 跑协议（不建 Unix socket）。Android 16 + KernelSU 下
+    /// app 连接 root 创建的 socket 会被 SELinux connectto 拒绝，走管道更稳。
+    pub stdio: bool,
     pub sock: Option<String>,
     /// 允许连接 socket 的 uid（socket 文件 chown 给它）。
     pub uid: u32,
@@ -33,6 +36,7 @@ impl Options {
 pub fn parse(args: &[String]) -> Options {
     let mut options = Options {
         server: has_flag(args, "--server"),
+        stdio: has_flag(args, "--stdio"),
         sock: value_of(args, "--sock"),
         uid: number_of(args, "--uid").unwrap_or(0).max(0) as u32,
         app_pid: number_of(args, "--app-pid").unwrap_or(0),
@@ -118,6 +122,14 @@ mod tests {
         assert_eq!(options.uid, 10234);
         assert_eq!(options.app_pid, 4321);
         assert_eq!(options.screen(), Some(Size::new(1080, 2400)));
+    }
+
+    #[test]
+    fn stdio_flag_is_parsed() {
+        let options = parse(&args(&["--stdio", "--uid", "10284", "--app-pid", "4321"]));
+        assert!(options.stdio);
+        assert!(!options.server);
+        assert_eq!(options.uid, 10284);
     }
 
     #[test]
