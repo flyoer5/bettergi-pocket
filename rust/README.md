@@ -187,6 +187,14 @@ RustNative.destroyEngine(handle)
 * `.so` 只打包了 `arm64-v8a`，其它 ABI 上 `RustNative.isAvailable` 为 false，
   调用方必须先判断，不要直接调。
 
+仓库里 `app/src/main/jniLibs/arm64-v8a/libbg_jni.so` 是这个 crate 的交叉编译产物，
+与 OpenCV 的 `.so` 一起提交。更新方式：
+
+```bash
+gh run download -R flyoer5/bettergi-pocket -n bg-jni-aarch64 -D /tmp/jni
+cp /tmp/jni/libbg_jni.so app/src/main/jniLibs/arm64-v8a/libbg_jni.so
+```
+
 ## 测试方式
 
 98 个单测全部跑在 host 上：不需要设备、不需要 OpenCV、不需要 OCR 引擎。

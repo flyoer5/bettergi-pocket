@@ -34,3 +34,6 @@
 
 # ===== app 自身类保留类名：R8 混淆后异常栈可读 =====
 -keep class com.bettergi.pocket.** { *; }
+
+# Rust 引擎的 native 方法与 JNI 符号名一一对应，混淆掉方法名会让 System.loadLibrary 后找不到实现
+-keep class com.bettergi.pocket.rust.RustNative { native <methods>; }
