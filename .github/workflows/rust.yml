@@ -56,3 +56,28 @@ jobs:
           workspaces: rust
       - name: cargo test
         run: cargo test --all
+
+  android:
+    name: android (aarch64 bgroot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+      - name: cargo build (aarch64-linux-android)
+        env:
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
+        run: cargo build --release -p bg-helper --target aarch64-linux-android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bgroot-aarch64
+          path: rust/target/aarch64-linux-android/release/bgroot
+          if-no-files-found: error

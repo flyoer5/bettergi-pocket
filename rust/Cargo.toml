@@ -4,6 +4,7 @@ members = [
     "crates/bg-core",
     "crates/bg-recognition",
     "crates/bg-trigger",
+    "crates/bg-helper",
 ]
 
 [workspace.package]

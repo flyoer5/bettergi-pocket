@@ -1,0 +1,20 @@
+[package]
+name = "bg-helper"
+description = "BetterGI Pocket 的 root helper（bgroot 的 Rust 实现）：Unix socket + input 注入 + 前台查询"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "bg_helper"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bgroot"
+path = "src/main.rs"
+
+[dependencies]
+bg-core.workspace = true
+libc = "0.2"

@@ -11,7 +11,8 @@ rust/
 └── crates/
     ├── bg-core/
     ├── bg-recognition/
-    └── bg-trigger/
+    ├── bg-trigger/
+    └── bg-helper/          root helper（产出可执行文件 bgroot）
 ```
 
 ## 跑检查
@@ -103,6 +104,28 @@ let out = machine.tick(now_ms, &input, &settings, &keywords);
 `OptionKeywords` 管三张词表（select / pause / default_pause），顺带实现桌面版词表的
 JSONC 清洗（去掉 `//` 注释行与尾逗号）。
 
+## bg-helper
+
+`bgroot` 的 Rust 实现，编译产物是可执行文件 `bgroot`。它由 app 用 `su -c` 拉起，
+经 Unix socket 通信，行协议与 Kotlin 侧 `RootBridge` 完全兼容。
+
+| 模块 | 内容 |
+|---|---|
+| `protocol` | 请求解析（`PING` / `PROBE` / `TAP` / `LONG` / `SWIPE` / `PID` / `KEEPALIVE` / `BACK` / `FG` / `QUIT`）与响应格式 |
+| `foreground` | 从 `dumpsys` 输出按 `/` 提前台包名，兼容 `mCurrentFocus`、`topResumedActivity` 等格式 |
+| `args` | 命令行参数、`wm size` 输出解析（Override size 优先） |
+| `shell` | 依次探测 `/system/bin/sh` → `/bin/sh` → Magisk busybox，带超时执行 |
+| `server` | Unix socket 监听、`SO_PEERCRED` 校验、连接处理、app 存活监视 |
+
+几处刻意的选择：
+
+* **注入走 `input` 命令**，不创建 uinput 虚拟设备。uinput 事件在米哈游引擎里不生效
+  （光圈出现但游戏无响应），`input` 走的是 InputManager 正规管线。
+* **包名先校验再拼命令**：只允许字母数字与 `.` / `_`，避免命令注入。
+* **socket 交给 app uid**：`chmod 0600` + `chown <uid>`，连接时再对 `SO_PEERCRED` 做一次校验，
+  拿不到凭据就拒绝。
+* **app 死了 helper 自己退**：每秒 `kill(app_pid, 0)` 检查一次，避免留下驻留的 root 进程。
+
 ## 测试方式
 
 98 个单测全部跑在 host 上：不需要设备、不需要 OpenCV、不需要 OCR 引擎。
@@ -121,6 +144,7 @@ JSONC 清洗（去掉 `//` 注释行与尾逗号）。
 | fmt | `cargo fmt --all -- --check` |
 | clippy | `cargo clippy --all-targets -- -D warnings` |
 | test | `cargo test --all` |
+| android | NDK r26d 交叉编译 `bg-helper` 到 `aarch64-linux-android`，产物作为 artifact 上传 |
 
 推送涉及 `rust/**` 的改动会自动触发；也可以手动：
 
@@ -133,10 +157,10 @@ gh run watch
 
 当前 Kotlin 实现仍在线上跑，Rust 侧按依赖顺序推进，每一步都能单独验证：
 
-1. **算法与状态机** —— 本目录已完成；
-2. **`bg-helper`** —— 用 Rust 重写 `bgroot`，Unix socket 协议保持不变，Kotlin 侧不用改；
-3. **JNI 桥** —— 把 `bg-recognition` / `bg-trigger` 暴露给 Kotlin；
-4. **平台层** —— 投屏、悬浮窗、无障碍服务。
+1. **算法与状态机** —— 已完成；
+2. **`bg-helper`** —— 已完成，可直接替换 `app/src/main/cpp/bgroot.c`（协议不变，Kotlin 侧不用改）；
+3. **JNI 桥** —— 把 `bg-recognition` / `bg-trigger` 暴露给 Kotlin —— 待做；
+4. **平台层** —— 投屏、悬浮窗、无障碍服务 —— 待做。
 
 ## 已知限制
 
@@ -145,3 +169,4 @@ gh run watch
 * 暂不支持 `useMask` / `use3Channels` / `useBinaryMatch`，这些字段会被解析但当前匹配不用它们。
 * OCR 引擎仍在平台层，Rust 只拿到已经切好的文本行。
 * `MatchGrid` 会把整张结果矩阵放进内存，模板接近整屏时要注意内存。
+* `bg-helper` 只实现 `--server` 模式；C 版的 `--tap` / `--swipe` / `--probe` 这类一次性调试入口没有搬过来。
