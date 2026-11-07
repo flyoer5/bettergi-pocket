@@ -130,6 +130,24 @@ jobs:
           fi
           cp rust/target/aarch64-linux-android/release/libbg_jni.so app/src/main/jniLibs/arm64-v8a/libbg_jni.so
           ls -l app/src/main/assets/root/arm64-v8a/bgroot app/src/main/jniLibs/arm64-v8a/libbg_jni.so
+      - name: Restore signing keystore
+        working-directory: .
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/bettergi.keystore"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/bettergi.keystore" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "已注入固定签名 keystore"
+          else
+            echo "::warning::没有 KEYSTORE_BASE64 secret，APK 将使用随机 debug 签名，无法覆盖安装"
+          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
