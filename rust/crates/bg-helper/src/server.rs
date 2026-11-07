@@ -317,9 +317,7 @@ pub fn run_stdio(options: &Options) -> i32 {
                 return 2;
             }
         }
-        let command = line
-            .trim_end_matches(|c| c == '\r' || c == '\n')
-            .to_string();
+        let command = line.trim_end_matches(['\r', '\n']).to_string();
         eprintln!("cmd: {command}");
         let (response, quit) = helper.handle_line(&command);
         if stdout.write_all(response.as_bytes()).is_err() {
