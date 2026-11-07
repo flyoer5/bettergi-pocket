@@ -75,11 +75,22 @@ jobs:
       - name: cargo build (aarch64-linux-android)
         env:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
-        run: cargo build --release -p bg-helper --target aarch64-linux-android
+        run: cargo build --release -p bg-helper -p bg-jni --target aarch64-linux-android
+      - name: strip
+        working-directory: .
+        run: |
+          STRIP="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          "$STRIP" -s rust/target/aarch64-linux-android/release/bgroot
+          "$STRIP" -s rust/target/aarch64-linux-android/release/libbg_jni.so
       - uses: actions/upload-artifact@v4
         with:
           name: bgroot-aarch64
           path: rust/target/aarch64-linux-android/release/bgroot
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bg-jni-aarch64
+          path: rust/target/aarch64-linux-android/release/libbg_jni.so
           if-no-files-found: error
 
   apk:
@@ -101,7 +112,7 @@ jobs:
         working-directory: rust
         env:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
-        run: cargo build --release -p bg-helper --target aarch64-linux-android
+        run: cargo build --release -p bg-helper -p bg-jni --target aarch64-linux-android
       - name: strip + 替换 assets 里的 helper
         working-directory: .
         run: |
@@ -112,7 +123,12 @@ jobs:
           fi
           cp rust/target/aarch64-linux-android/release/bgroot app/src/main/assets/root/arm64-v8a/bgroot
           chmod +x app/src/main/assets/root/arm64-v8a/bgroot
-          ls -l app/src/main/assets/root/arm64-v8a/bgroot
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          if ! cmp -s rust/target/aarch64-linux-android/release/libbg_jni.so app/src/main/jniLibs/arm64-v8a/libbg_jni.so; then
+            echo "::warning::jniLibs 里的 libbg_jni.so 与最新构建不一致；本次 APK 用新构建打包，请把产物提交进仓库"
+          fi
+          cp rust/target/aarch64-linux-android/release/libbg_jni.so app/src/main/jniLibs/arm64-v8a/libbg_jni.so
+          ls -l app/src/main/assets/root/arm64-v8a/bgroot app/src/main/jniLibs/arm64-v8a/libbg_jni.so
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

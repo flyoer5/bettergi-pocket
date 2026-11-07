@@ -12,7 +12,8 @@ rust/
     ├── bg-core/
     ├── bg-recognition/
     ├── bg-trigger/
-    └── bg-helper/          root helper（产出可执行文件 bgroot）
+    ├── bg-helper/          root helper（产出可执行文件 bgroot）
+    └── bg-jni/             给 Kotlin 用的 JNI 桥（产出 libbg_jni.so）
 ```
 
 ## 跑检查
@@ -140,6 +141,52 @@ chmod +x app/src/main/assets/root/arm64-v8a/bgroot
 
 `apk` job 会在打包前对比仓库里的资产与最新构建，不一致时打一条 warning 并仍用最新构建打包。
 
+## bg-jni
+
+把 `bg-trigger` 的自动对话引擎通过 JNI 暴露给 Kotlin，产物是 `libbg_jni.so`。
+Kotlin 侧对应 `com.bettergi.pocket.rust.RustNative`。
+
+接口只有「创建 / 释放 / 喂一帧 / 改设置」几条：
+
+```kotlin
+RustNative.createEngine(settingsJson): Long
+RustNative.tick(handle, observationJson): String?
+RustNative.resetEngine(handle)
+RustNative.updateSettings(handle, json)
+RustNative.updateKeywords(handle, json)
+RustNative.destroyEngine(handle)
+```
+
+用 JSON 而不是二进制：每拍只有几十字节，开销可忽略；Kotlin 侧不用手写内存布局，
+加字段不用两边同步改，出问题能直接打印原文。观测报文长这样：
+
+```json
+{
+  "nowMs": 12345,
+  "screen": {"w": 1920, "h": 1080},
+  "capture": {"w": 1920, "h": 1080},
+  "foreground": true,
+  "dialogue": true,
+  "chatIcons": [{"x": 100, "y": 500, "w": 20, "h": 20}],
+  "ocrLines": [{"x": 200, "y": 300, "w": 200, "h": 40, "text": "确定"}],
+  "blackRate": 0.62
+}
+```
+
+返回：
+
+```json
+{"actions":[{"type":"tap","x":960,"y":1060,"durationMs":50}],
+ "events":["点击对话图标 (960, 1060)"],"state":"inDialog","nextTickMs":200}
+```
+
+边界约定：
+
+* `foreground` 为 `false` / 省略时引擎不产生任何动作；
+* 传进来的 JSON 不合法会抛 `IllegalArgumentException`（只有这一种情况会抛）；
+* `.so` 只打包了 `arm64-v8a`，其它 ABI 上 `RustNative.isAvailable` 为 false，
+  调用方必须先判断，不要直接调。
+
 ## 测试方式
 
 98 个单测全部跑在 host 上：不需要设备、不需要 OpenCV、不需要 OCR 引擎。
@@ -158,7 +205,7 @@ chmod +x app/src/main/assets/root/arm64-v8a/bgroot
 | fmt | `cargo fmt --all -- --check` |
 | clippy | `cargo clippy --all-targets -- -D warnings` |
 | test | `cargo test --all` |
-| android | NDK r26d 交叉编译 `bg-helper` 到 `aarch64-linux-android`，产物作为 artifact 上传 |
+| android | NDK r26d 交叉编译 `bg-helper` / `bg-jni` 到 `aarch64-linux-android`，产物作为 artifact 上传 |
 
 推送涉及 `rust/**` 的改动会自动触发；也可以手动：
 
@@ -173,7 +220,8 @@ gh run watch
 
 1. **算法与状态机** —— 已完成；
 2. **`bg-helper`** —— 已完成，可直接替换 `app/src/main/cpp/bgroot.c`（协议不变，Kotlin 侧不用改）；
-3. **JNI 桥** —— 把 `bg-recognition` / `bg-trigger` 暴露给 Kotlin —— 待做；
+3. **JNI 桥** —— `bg-jni` 已产出 `libbg_jni.so`，Kotlin 侧 `RustNative` 已就位，
+   但**调用点还没有切**（识别层替换需要真机验证）—— 进行中；
 4. **平台层** —— 投屏、悬浮窗、无障碍服务 —— 待做。
 
 ## 已知限制

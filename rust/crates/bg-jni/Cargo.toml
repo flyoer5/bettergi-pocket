@@ -1,0 +1,21 @@
+[package]
+name = "bg-jni"
+description = "把 bg-trigger 的自动对话引擎通过 JNI 暴露给 Kotlin（产物 libbg_jni.so）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "bg_jni"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bg-core.workspace = true
+bg-trigger.workspace = true
+serde_json.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+jni = "0.21"
+# 本地/CI 的 MSRV 是 1.75：jni-sys 0.3.1 起要求 1.77，钉住 0.3.0
+jni-sys = "=0.3.0"
