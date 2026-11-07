@@ -74,7 +74,7 @@ jobs:
           ndk-version: r26d
       - name: cargo build (aarch64-linux-android)
         env:
-          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
         run: cargo build --release -p bg-helper -p bg-jni --target aarch64-linux-android
       - name: strip
         working-directory: .
@@ -111,7 +111,7 @@ jobs:
       - name: cargo build (aarch64-linux-android)
         working-directory: rust
         env:
-          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
         run: cargo build --release -p bg-helper -p bg-jni --target aarch64-linux-android
       - name: strip + 替换 assets 里的 helper
         working-directory: .
