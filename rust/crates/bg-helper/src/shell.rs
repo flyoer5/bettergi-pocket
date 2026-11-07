@@ -70,8 +70,11 @@ impl Shell {
                     if Instant::now() >= deadline {
                         let _ = child.kill();
                         let _ = child.wait();
-                        let _ = stdout_reader.join();
-                        let _ = stderr_reader.join();
+                        // 不能 join 读线程：被杀的只是 sh，管道写端可能还被它 fork 出的
+                        // 孙进程（如 sleep）拿着，join 会把超时等待又拖成"等孙子退出"。
+                        // 直接丢弃句柄让线程自行结束即可。
+                        drop(stdout_reader);
+                        drop(stderr_reader);
                         return None;
                     }
                     std::thread::sleep(Duration::from_millis(5));
