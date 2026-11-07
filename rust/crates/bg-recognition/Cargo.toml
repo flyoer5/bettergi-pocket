@@ -1,0 +1,13 @@
+[package]
+name = "bg-recognition"
+description = "纯 Rust 的识别层：模板匹配、参考坐标换算、识别资源解析、OCR 文本规则"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bg-core.workspace = true
+serde_json.workspace = true
+regex.workspace = true

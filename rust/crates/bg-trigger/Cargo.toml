@@ -1,0 +1,15 @@
+[package]
+name = "bg-trigger"
+description = "触发引擎与自动对话状态机（纯逻辑，时间由外部注入）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bg-core.workspace = true
+bg-recognition.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]

@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bg-core",
+    "crates/bg-recognition",
+    "crates/bg-trigger",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "GPL-3.0-only"
+repository = "https://github.com/flyoer5/bettergi-pocket"
+
+[workspace.dependencies]
+bg-core = { path = "crates/bg-core" }
+bg-recognition = { path = "crates/bg-recognition" }
+bg-trigger = { path = "crates/bg-trigger" }
+serde_json = "1.0"
+regex = "1.10"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

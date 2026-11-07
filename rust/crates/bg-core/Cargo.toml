@@ -1,0 +1,10 @@
+[package]
+name = "bg-core"
+description = "BetterGI Pocket 的基础数据模型：几何、帧、动作、设置"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
