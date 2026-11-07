@@ -126,6 +126,20 @@ JSONC 清洗（去掉 `//` 注释行与尾逗号）。
   拿不到凭据就拒绝。
 * **app 死了 helper 自己退**：每秒 `kill(app_pid, 0)` 检查一次，避免留下驻留的 root 进程。
 
+仓库里 `app/src/main/assets/root/arm64-v8a/bgroot` 现在就是**这个 crate 交叉编译出来的产物**
+（arm64-v8a，strip 后约 356KB）。C 版 `app/src/main/cpp/bgroot.c` 暂时保留作参考，
+它的 `build.sh` 产出的旧二进制已被替换。
+
+更新这个二进制的方式：
+
+```bash
+gh run download -R flyoer5/bettergi-pocket -n bgroot-aarch64 -D /tmp/bgroot
+cp /tmp/bgroot/bgroot app/src/main/assets/root/arm64-v8a/bgroot
+chmod +x app/src/main/assets/root/arm64-v8a/bgroot
+```
+
+`apk` job 会在打包前对比仓库里的资产与最新构建，不一致时打一条 warning 并仍用最新构建打包。
+
 ## 测试方式
 
 98 个单测全部跑在 host 上：不需要设备、不需要 OpenCV、不需要 OCR 引擎。

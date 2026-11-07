@@ -107,6 +107,9 @@ jobs:
         run: |
           STRIP="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           "$STRIP" -s rust/target/aarch64-linux-android/release/bgroot
+          if ! cmp -s rust/target/aarch64-linux-android/release/bgroot app/src/main/assets/root/arm64-v8a/bgroot; then
+            echo "::warning::assets 里的 bgroot 与最新构建不一致；本次 APK 用新构建打包，请把产物提交进仓库"
+          fi
           cp rust/target/aarch64-linux-android/release/bgroot app/src/main/assets/root/arm64-v8a/bgroot
           chmod +x app/src/main/assets/root/arm64-v8a/bgroot
           ls -l app/src/main/assets/root/arm64-v8a/bgroot
