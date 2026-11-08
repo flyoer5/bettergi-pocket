@@ -11,7 +11,6 @@ import com.bettergi.pocket.recognition.RecognitionObject
 import com.bettergi.pocket.recognition.area.Region
 import com.bettergi.pocket.recognition.opencv.MatOps
 import com.bettergi.pocket.rust.RustAutoSkipEngine
-import com.bettergi.pocket.rust.toRustJson
 import com.bettergi.pocket.settings.TriggerSettings
 import com.bettergi.pocket.trigger.FeatureTick
 import com.bettergi.pocket.trigger.TriggerFeature
@@ -43,11 +42,16 @@ class AutoSkipFeature(
     private var rustEngine: RustAutoSkipEngine? = null
     private var rustUnavailable = false
     private var lastRustState = "idle"
-    private var lastSettingsJson: String? = null
+    private var lastSettings: TriggerSettings? = null
     /** 选项区采集（OCR + 感叹号）节流：OCR 很贵，只在该做决策的那一拍跑。 */
     private var lastOptionObservationAtMs = 0L
     /** 黑屏比例采集节流。 */
     private var lastBlackObservationAtMs = 0L
+    // 采集耗时统计
+    private var perfTicks = 0
+    private var perfCollectMs = 0L
+    private var perfOcrCount = 0
+    private var perfWindowStartMs = 0L
 
     // ---- Kotlin 回退状态机 ----
     private enum class State { IDLE, IN_DIALOG, CONFIRMING }
@@ -111,7 +115,6 @@ class AutoSkipFeature(
 
     private fun ensureRustEngine(settings: TriggerSettings): RustAutoSkipEngine? {
         if (rustUnavailable) return null
-        val settingsJson = settings.toRustJson()
         val current = rustEngine
         if (current == null) {
             val created = RustAutoSkipEngine.create(settings)
@@ -122,13 +125,14 @@ class AutoSkipFeature(
             }
             created.updateKeywords(optionKeywords)
             rustEngine = created
-            lastSettingsJson = settingsJson
+            lastSettings = settings
             events?.onAutoSkipLog("自动对话已切换到 Rust 引擎")
             return created
         }
-        if (lastSettingsJson != settingsJson) {
+        // 每拍比较数据类比重新序列化 JSON 便宜
+        if (lastSettings != settings) {
             current.updateSettings(settings)
-            lastSettingsJson = settingsJson
+            lastSettings = settings
         }
         return current
     }
@@ -140,6 +144,7 @@ class AutoSkipFeature(
         settings: TriggerSettings,
         actions: ActionEmitter,
     ) {
+        val collectStartMs = System.currentTimeMillis()
         val capture = content.captureRectArea
         val dialogue = inDialogue(content)
         val state = lastRustState
@@ -175,6 +180,24 @@ class AutoSkipFeature(
             computeBlackRate(content)
         } else {
             null
+        }
+
+        // 采集耗时统计（识别成本，不含 Rust 决策）
+        val collectMs = System.currentTimeMillis() - collectStartMs
+        perfTicks++
+        perfCollectMs += collectMs
+        if (ocrLines.isNotEmpty()) perfOcrCount++
+        if (perfWindowStartMs == 0L) perfWindowStartMs = now
+        if (now - perfWindowStartMs >= 5000L) {
+            Log.i(
+                TAG,
+                "采集: ${perfTicks} 拍 / 平均 ${perfCollectMs / perfTicks}ms / " +
+                    "OCR ${perfOcrCount} 次 / 状态 $state",
+            )
+            perfTicks = 0
+            perfCollectMs = 0L
+            perfOcrCount = 0
+            perfWindowStartMs = now
         }
 
         val observation = buildObservation(tick, capture, dialogue, exclamation, chatHits, ocrLines, blackRate)

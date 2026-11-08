@@ -2,6 +2,7 @@ package com.bettergi.pocket.trigger
 
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import android.util.Log
@@ -41,6 +42,12 @@ class TriggerEngine(
     @Volatile
     private var lastFgWarnMs: Long = 0L
 
+    // 性能埋点：每 5 秒打一行，便于真机定位瓶颈
+    private var perfTickCount = 0
+    private var perfTotalMs = 0L
+    private var perfWindowStartMs = 0L
+    private var perfMaxMs = 0L
+
     fun start() {
         if (running) return
         running = true
@@ -66,6 +73,7 @@ class TriggerEngine(
     private val tickRunnable = object : Runnable {
         override fun run() {
             if (!running) return
+            val tickStartMs = SystemClock.elapsedRealtime()
 
             val settings = settingsRepository.get()
             if (!settings.screenShareEnabled) {
@@ -141,6 +149,24 @@ class TriggerEngine(
 
             val now = System.currentTimeMillis()
             val interval = if (now - lastActionAtMs < ACTIVE_WINDOW_MS) FAST_TICK_MS else SLOW_TICK_MS
+
+            val tickMs = SystemClock.elapsedRealtime() - tickStartMs
+            perfTickCount++
+            perfTotalMs += tickMs
+            if (tickMs > perfMaxMs) perfMaxMs = tickMs
+            if (perfWindowStartMs == 0L) perfWindowStartMs = now
+            if (now - perfWindowStartMs >= 5000L) {
+                Log.i(
+                    TAG,
+                    "性能: ${perfTickCount} 拍 / 平均 ${perfTotalMs / perfTickCount}ms / " +
+                        "最大 ${perfMaxMs}ms / 拍间隔 ${interval}ms",
+                )
+                perfTickCount = 0
+                perfTotalMs = 0L
+                perfMaxMs = 0L
+                perfWindowStartMs = now
+            }
+
             handler.postDelayed(this, interval)
         }
     }
