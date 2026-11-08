@@ -8,6 +8,7 @@ import com.bettergi.pocket.log.AppLog
 import com.bettergi.pocket.root.RootBridge
 import com.bettergi.pocket.recognition.ocr.OcrFactory
 import com.bettergi.pocket.recognition.opencv.OpenCvRuntime
+import com.bettergi.pocket.rust.RustNative
 import java.io.File
 
 class PocketApplication : Application() {
@@ -20,6 +21,14 @@ class PocketApplication : Application() {
             AppLog.e(TAG, "OpenCV initialization failed")
         }
         OcrFactory.init(this)
+        // 启动时就确认 Rust 引擎是否可用：version() 是 native 调用，
+        // 能同时验证 .so 被加载和 JNI 符号解析成功，不必等自动对话跑起来。
+        if (RustNative.isAvailable) {
+            val version = runCatching { RustNative.version() }.getOrNull()
+            AppLog.i(TAG, "Rust 引擎已加载: $version")
+        } else {
+            AppLog.w(TAG, "Rust 引擎不可用: ${RustNative.loadFailure()?.message}")
+        }
     }
 
     private fun currentProcessName(): String {

@@ -228,9 +228,24 @@ gh run watch
 
 1. **算法与状态机** —— 已完成；
 2. **`bg-helper`** —— 已完成，可直接替换 `app/src/main/cpp/bgroot.c`（协议不变，Kotlin 侧不用改）；
-3. **JNI 桥** —— `bg-jni` 已产出 `libbg_jni.so`，Kotlin 侧 `RustNative` 已就位，
-   但**调用点还没有切**（识别层替换需要真机验证）—— 进行中；
+3. **JNI 桥** —— 已完成：自动对话的**状态机已切到 Rust**（`AutoSkipFeature` 只做识别，
+   决策走 `RustNative.tick`；`.so` 不可用或调用失败时自动回退 Kotlin 实现）。
+   模板匹配的 JNI 接口（`matchTemplate`）已就绪，但朴素实现性能不够，待优化后再接；
 4. **平台层** —— 投屏、悬浮窗、无障碍服务 —— 待做。
+
+## 真机运行注意（Android 16 + KernelSU 实测）
+
+这四条都是踩过的坑，和 Rust 代码无关但会让 helper 完全起不来：
+
+1. **KernelSU 的「卸载模块挂载」**：默认对普通应用开启，导致 app 的 mount namespace 里
+   看不到 `/system/bin/su`（`test -x` 失败、exec 报 `error=13`）。要在 KernelSU 的
+   App Profile 里给这个应用关掉「Umount modules」。
+2. **su 域不能 exec app 私有目录里的二进制**（SELinux 禁止 execute `app_data_file`）：
+   helper 必须先 `cp` 到 `/data/local/tmp` 再执行，否则报 `inaccessible or not found` / 127。
+3. **app 连接 root 进程创建的 Unix socket 会被 SELinux 拒绝**（`connectto` 检查，EACCES），
+   即使文件是 0600 + chown 到 app uid 也没用 —— 所以通信走 stdio 管道。
+4. **CI 必须用固定签名**：每次随机 debug 签名会导致安装后 uid 变化，KernelSU 的授权条目
+   随之失效（表现为「明明授权过，但 app 又看不到 su」）。
 
 ## 已知限制
 
