@@ -44,6 +44,10 @@ class AutoSkipFeature(
     private var rustUnavailable = false
     private var lastRustState = "idle"
     private var lastSettingsJson: String? = null
+    /** 选项区采集（OCR + 感叹号）节流：OCR 很贵，只在该做决策的那一拍跑。 */
+    private var lastOptionObservationAtMs = 0L
+    /** 黑屏比例采集节流。 */
+    private var lastBlackObservationAtMs = 0L
 
     // ---- Kotlin 回退状态机 ----
     private enum class State { IDLE, IN_DIALOG, CONFIRMING }
@@ -138,24 +142,36 @@ class AutoSkipFeature(
     ) {
         val capture = content.captureRectArea
         val dialogue = inDialogue(content)
-        val inDialog = lastRustState == "inDialog"
+        val state = lastRustState
+        val inDialog = state == "inDialog"
+        val confirming = state == "confirming"
+        val now = System.currentTimeMillis()
 
-        val exclamation = if (inDialog && settings.smartOptionEnabled && settings.exclamationClickEnabled) {
+        // 选项区（OCR + 感叹号）只在决策窗口采集：OCR 单次几百毫秒，
+        // 每拍都跑会把整拍拖到 2 秒，跳过点击也就跟着变慢。
+        val optionWindow = inDialog && now - lastOptionObservationAtMs >= OPTION_OBSERVATION_INTERVAL_MS
+        if (optionWindow) lastOptionObservationAtMs = now
+
+        val exclamation = if (optionWindow && settings.smartOptionEnabled && settings.exclamationClickEnabled) {
             content.findMulti(assets.get(TASK_NAME, "ExclamationIcon", capture))
         } else {
             emptyList()
         }
-        val chatHits = if (inDialog) {
+        // Confirming 阶段每拍都要看图标是否还在原处（模板匹配便宜），其余拍只在决策窗口查。
+        val chatHits = if (confirming || optionWindow) {
             content.findMulti(assets.get(TASK_NAME, "ChatIcon", capture))
         } else {
             emptyList()
         }
-        val ocrLines = if (inDialog && settings.smartOptionEnabled) {
+        val ocrLines = if (optionWindow && settings.smartOptionEnabled) {
             collectOptionLines(content, chatHits)
         } else {
             emptyList()
         }
-        val blackRate = if (lastRustState == "idle" && settings.blackScreenClickEnabled) {
+        // 黑屏比例要扫中部 1/3 的像素，也节流；黑屏点击本身有 1200ms 间隔。
+        val blackWindow = state == "idle" && now - lastBlackObservationAtMs >= BLACK_OBSERVATION_INTERVAL_MS
+        val blackRate = if (blackWindow && settings.blackScreenClickEnabled) {
+            lastBlackObservationAtMs = now
             computeBlackRate(content)
         } else {
             null
@@ -537,6 +553,10 @@ class AutoSkipFeature(
         private const val OPTION_DECISION_INTERVAL_MS = 1000L
         private const val TALK_HISTORY_LABEL_OCR_INTERVAL_MS = 1000L
         private const val OPTION_MAX_Y_GAP = 150
+        /** 选项区采集节流，与 Rust 侧决策节流（1000ms）对齐。 */
+        private const val OPTION_OBSERVATION_INTERVAL_MS = 900L
+        /** 黑屏比例采集节流。 */
+        private const val BLACK_OBSERVATION_INTERVAL_MS = 400L
         private const val OPTION_ANCHOR_TOLERANCE_PX = 32
         private const val QUICK_SKIP_MIN_SEPARATION_PX = 32
         private const val BLACK_RATE_MIN = 0.5
