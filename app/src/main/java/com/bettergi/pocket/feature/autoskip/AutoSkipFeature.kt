@@ -2,6 +2,7 @@ package com.bettergi.pocket.feature.autoskip
 
 import android.util.Log
 import com.bettergi.pocket.input.ActionEmitter
+import com.bettergi.pocket.input.BackAction
 import com.bettergi.pocket.input.ClickAction
 import com.bettergi.pocket.recognition.CaptureContent
 import com.bettergi.pocket.recognition.IntRect
@@ -9,18 +10,26 @@ import com.bettergi.pocket.recognition.RecognitionAssets
 import com.bettergi.pocket.recognition.RecognitionObject
 import com.bettergi.pocket.recognition.area.Region
 import com.bettergi.pocket.recognition.opencv.MatOps
+import com.bettergi.pocket.rust.RustAutoSkipEngine
+import com.bettergi.pocket.rust.toRustJson
 import com.bettergi.pocket.settings.TriggerSettings
 import com.bettergi.pocket.trigger.FeatureTick
 import com.bettergi.pocket.trigger.TriggerFeature
 import com.bettergi.pocket.trigger.screenBottomCenter
-import kotlin.math.abs
+import org.json.JSONArray
+import org.json.JSONObject
 import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.Scalar
+import kotlin.math.abs
 
 /**
- * 自动对话（移植 PC 版 AutoSkip 核心，去掉语音/弹窗/邀约）：
- * 感叹号优先、选项 OCR + 关键词决策、状态机 + 点击确认、黑屏转场点击。
+ * 自动对话。
+ *
+ * 决策（状态机、点击点、节流、关键词判定）由 Rust 侧 `bg-trigger` 负责，Kotlin 只做识别：
+ * 对话图标是否命中、哪些位置有图标、选项区 OCR 文本、黑屏比例。
+ *
+ * `.so` 不可用时会回退到本文件里保留的 Kotlin 状态机实现（[tickLegacy]），行为一致。
  */
 class AutoSkipFeature(
     private val assets: RecognitionAssets,
@@ -30,6 +39,13 @@ class AutoSkipFeature(
 
     override val key: String = "AutoSkip"
 
+    // ---- Rust 决策 ----
+    private var rustEngine: RustAutoSkipEngine? = null
+    private var rustUnavailable = false
+    private var lastRustState = "idle"
+    private var lastSettingsJson: String? = null
+
+    // ---- Kotlin 回退状态机 ----
     private enum class State { IDLE, IN_DIALOG, CONFIRMING }
 
     private data class Decision(val region: Region)
@@ -71,13 +87,218 @@ class AutoSkipFeature(
         settings.screenShareEnabled && settings.autoSkipEnabled
 
     override fun release() {
+        rustEngine?.close()
+        rustEngine = null
         // 服务停止/引擎释放时归还模板 Mat，避免 native 内存滞留到进程结束
         assets.clear()
     }
 
     override fun onTick(tick: FeatureTick, settings: TriggerSettings, actions: ActionEmitter) {
         val content = tick.content ?: return
+        val engine = ensureRustEngine(settings)
+        if (engine == null) {
+            tickLegacy(tick, content, settings, actions)
+            return
+        }
+        tickWithRust(engine, tick, content, settings, actions)
+    }
 
+    // ---------------- Rust 决策路径 ----------------
+
+    private fun ensureRustEngine(settings: TriggerSettings): RustAutoSkipEngine? {
+        if (rustUnavailable) return null
+        val settingsJson = settings.toRustJson()
+        val current = rustEngine
+        if (current == null) {
+            val created = RustAutoSkipEngine.create(settings)
+            if (created == null) {
+                rustUnavailable = true
+                events?.onAutoSkipLog("Rust 引擎不可用，回退到 Kotlin 状态机")
+                return null
+            }
+            created.updateKeywords(optionKeywords)
+            rustEngine = created
+            lastSettingsJson = settingsJson
+            events?.onAutoSkipLog("自动对话已切换到 Rust 引擎")
+            return created
+        }
+        if (lastSettingsJson != settingsJson) {
+            current.updateSettings(settings)
+            lastSettingsJson = settingsJson
+        }
+        return current
+    }
+
+    private fun tickWithRust(
+        engine: RustAutoSkipEngine,
+        tick: FeatureTick,
+        content: CaptureContent,
+        settings: TriggerSettings,
+        actions: ActionEmitter,
+    ) {
+        val capture = content.captureRectArea
+        val dialogue = inDialogue(content)
+        val inDialog = lastRustState == "inDialog"
+
+        val exclamation = if (inDialog && settings.smartOptionEnabled && settings.exclamationClickEnabled) {
+            content.findMulti(assets.get(TASK_NAME, "ExclamationIcon", capture))
+        } else {
+            emptyList()
+        }
+        val chatHits = if (inDialog) {
+            content.findMulti(assets.get(TASK_NAME, "ChatIcon", capture))
+        } else {
+            emptyList()
+        }
+        val ocrLines = if (inDialog && settings.smartOptionEnabled) {
+            collectOptionLines(content, chatHits)
+        } else {
+            emptyList()
+        }
+        val blackRate = if (lastRustState == "idle" && settings.blackScreenClickEnabled) {
+            computeBlackRate(content)
+        } else {
+            null
+        }
+
+        val observation = buildObservation(tick, capture, dialogue, exclamation, chatHits, ocrLines, blackRate)
+        val result = engine.tick(observation)
+        if (result == null) {
+            rustUnavailable = true
+            engine.close()
+            rustEngine = null
+            events?.onAutoSkipLog("Rust 引擎调用失败，回退到 Kotlin 状态机")
+            return
+        }
+
+        val payload = JSONObject(result)
+        lastRustState = payload.optString("state", lastRustState)
+        dispatchActions(payload, actions)
+        dispatchEvents(payload)
+    }
+
+    /** 选项文字区的 OCR：区域算法与 Rust 侧一致（以最下方对话图标为基准）。 */
+    private fun collectOptionLines(content: CaptureContent, hits: List<Region>): List<Region> {
+        if (hits.isEmpty()) return emptyList()
+        val region = content.captureRectArea
+        val lowest = hits.maxByOrNull { it.y } ?: return emptyList()
+        val scale = region.width / 1920.0
+        val ocrLeft = (lowest.x + lowest.width + 8 * scale).toInt().coerceAtMost(region.width - 1)
+        val ocrWidth = (535 * scale).toInt().coerceAtLeast(80)
+        val ocrTop = (region.height / 12).coerceAtLeast(0)
+        val ocrBottom = (lowest.y + lowest.height + 30 * scale).toInt().coerceAtMost(region.height)
+        val ocrHeight = ocrBottom - ocrTop
+        if (ocrLeft < 0 || ocrWidth <= 0 || ocrHeight <= 0) return emptyList()
+        val recognitionObject = RecognitionObject.ocrThis()
+        recognitionObject.regionOfInterest = IntRect(ocrLeft, ocrTop, ocrWidth, ocrHeight)
+        return region.findMulti(recognitionObject)
+    }
+
+    /** 画面中部 1/3 的黑像素占比；失败返回 null。 */
+    private fun computeBlackRate(content: CaptureContent): Double? {
+        val region = content.captureRectArea
+        val grey = region.cacheGreyMatSafe ?: return null
+        val width = grey.cols()
+        val height = grey.rows()
+        if (width <= 0 || height < 30) return null
+        val top = height / 3
+        val roi = MatOps.roiView(grey, IntRect(0, top, width, height - top * 2))
+        val mask = Mat()
+        return try {
+            Core.inRange(roi, Scalar(0.0), Scalar(0.0), mask)
+            val black = Core.countNonZero(mask).toDouble()
+            val total = (roi.cols() * roi.rows()).toDouble()
+            if (total <= 0.0) null else black / total
+        } finally {
+            roi.release()
+            mask.release()
+        }
+    }
+
+    private fun buildObservation(
+        tick: FeatureTick,
+        capture: Region,
+        dialogue: Boolean,
+        exclamation: List<Region>,
+        chatHits: List<Region>,
+        ocrLines: List<Region>,
+        blackRate: Double?,
+    ): String {
+        val payload = JSONObject()
+        payload.put("nowMs", System.currentTimeMillis())
+        payload.put("screen", JSONObject().put("w", tick.screenWidth).put("h", tick.screenHeight))
+        payload.put("capture", JSONObject().put("w", capture.width).put("h", capture.height))
+        payload.put("foreground", true)
+        payload.put("dialogue", dialogue)
+        payload.put("exclamation", rectArray(exclamation))
+        payload.put("chatIcons", rectArray(chatHits))
+        payload.put("ocrLines", ocrArray(ocrLines))
+        if (blackRate != null) payload.put("blackRate", blackRate)
+        return payload.toString()
+    }
+
+    private fun rectArray(regions: List<Region>): JSONArray {
+        val array = JSONArray()
+        for (region in regions) {
+            array.put(
+                JSONObject()
+                    .put("x", region.x)
+                    .put("y", region.y)
+                    .put("w", region.width)
+                    .put("h", region.height),
+            )
+        }
+        return array
+    }
+
+    private fun ocrArray(regions: List<Region>): JSONArray {
+        val array = JSONArray()
+        for (region in regions) {
+            array.put(
+                JSONObject()
+                    .put("x", region.x)
+                    .put("y", region.y)
+                    .put("w", region.width)
+                    .put("h", region.height)
+                    .put("text", region.text),
+            )
+        }
+        return array
+    }
+
+    private fun dispatchActions(payload: JSONObject, actions: ActionEmitter) {
+        val array = payload.optJSONArray("actions") ?: return
+        for (index in 0 until array.length()) {
+            val action = array.optJSONObject(index) ?: continue
+            when (action.optString("type")) {
+                "tap" -> actions.emit(ClickAction(action.optInt("x"), action.optInt("y")))
+                "back" -> actions.emit(BackAction)
+                else -> Unit
+            }
+        }
+    }
+
+    private fun dispatchEvents(payload: JSONObject) {
+        val array = payload.optJSONArray("events") ?: return
+        for (index in 0 until array.length()) {
+            val message = array.optString(index, "")
+            if (message.isEmpty()) continue
+            when (message) {
+                "空闲扫描" -> events?.onIdleScan()
+                "对话图标命中" -> events?.onTalkHistoryMatched()
+                else -> events?.onAutoSkipLog(message)
+            }
+        }
+    }
+
+    // ---------------- Kotlin 回退状态机（与 Rust 语义一致） ----------------
+
+    private fun tickLegacy(
+        tick: FeatureTick,
+        content: CaptureContent,
+        settings: TriggerSettings,
+        actions: ActionEmitter,
+    ) {
         when (state) {
             State.IDLE -> {
                 if (inDialogue(content)) {
@@ -101,9 +322,6 @@ class AutoSkipFeature(
                 events?.onTalkHistoryMatched()
 
                 if (settings.quickSkipDialogueEnabled) {
-                    // 固定点（原版行为）始终保留；开启自定义后是"叠加"而非"替换",
-                    // 同一拍依次点两处，覆盖不同界面下的可点区域。两点过近则合并为一次，
-                    // 避免同一位置连点两下被系统当成双击、也避免重复注入。
                     val (fixedX, fixedY) = screenBottomCenter(tick.screenWidth, tick.screenHeight)
                     val points = ArrayList<Pair<Int, Int>>(2)
                     points.add(fixedX to fixedY)
@@ -119,7 +337,6 @@ class AutoSkipFeature(
                         }
                     }
                     val skipNow = System.currentTimeMillis()
-                    // 点击节流：避免每帧狂点干扰手动操作（500ms 一次足够逐行跳过对话）
                     if (skipNow - lastSkipClickMs >= settings.skipClickIntervalMs) {
                         lastSkipClickMs = skipNow
                         if (skipNow - lastSkipLogMs >= SKIP_LOG_INTERVAL_MS) {
@@ -134,7 +351,6 @@ class AutoSkipFeature(
 
                 val now = System.currentTimeMillis()
                 if (now < clickedAtMs + CONFIRM_WINDOW_MS && clickedOptionY >= 0) return
-                // 1) 感叹号选项：优先级最高，命中直接点
                 val excls = content.findMulti(
                     assets.get(TASK_NAME, "ExclamationIcon", content.captureRectArea),
                 )
@@ -151,7 +367,6 @@ class AutoSkipFeature(
                     return
                 }
 
-                // 2) 普通选项：OCR 读文字 + 关键词/橙色决策（节流 1s）
                 if (now - lastOptionDecisionAtMs < OPTION_DECISION_INTERVAL_MS) return
                 lastOptionDecisionAtMs = now
 
@@ -164,9 +379,6 @@ class AutoSkipFeature(
                 } ?: return
                 val target = decision.region
                 val (topX, topY) = target.centerOnNativeCapture()
-                // 确认基准必须与 CONFIRMING 的比较对象同源：
-                // 决策结果可能是 OCR 文本行（智能选项路径），而确认阶段比较的是 ChatIcon 命中，
-                // 两者几何不同（文本在图标右侧）。取与目标同排最近的 ChatIcon 作为锚点。
                 val anchor = hits.minByOrNull { abs(it.y - target.y) }
                 events?.onChatIconsRecognized(hits.size, topX, topY)
 
@@ -190,7 +402,6 @@ class AutoSkipFeature(
                 val hits = content.findMulti(chatIcon)
                 val top = selectTopChatIcon(hits)
 
-                // 判定"选项是否还在原处"：容差比较（同模板同空间，2~3px 抖动正常，给 32px 余量）
                 val stillThere = top != null && hits.any {
                     abs(it.x - clickedOptionX) <= OPTION_ANCHOR_TOLERANCE_PX &&
                         abs(it.y - clickedOptionY) <= OPTION_ANCHOR_TOLERANCE_PX
@@ -212,11 +423,10 @@ class AutoSkipFeature(
                     clickedOptionY = -1
                 }
             }
-
         }
     }
 
-    /** 黑屏转场检测：非对话时画面中部 1/3 区域接近全黑则点击推进（移植 PC 版）。 */
+    /** 黑屏转场检测：非对话时画面中部 1/3 区域接近全黑则点击推进。 */
     private fun clickBlackScreenIfNeeded(
         content: CaptureContent,
         tick: FeatureTick,
@@ -225,52 +435,33 @@ class AutoSkipFeature(
     ) {
         val now = System.currentTimeMillis()
         if (now - lastBlackClickMs < settings.blackClickIntervalMs) return
-        val region = content.captureRectArea
-        val grey = region.cacheGreyMatSafe ?: return
-        val w = grey.cols()
-        val h = grey.rows()
-        if (w <= 0 || h < 30) return
-        val top = h / 3
-        val roi = MatOps.roiView(grey, IntRect(0, top, w, h - top * 2))
-        val mask = Mat()
-        try {
-            Core.inRange(roi, Scalar(0.0), Scalar(0.0), mask)
-            val black = Core.countNonZero(mask).toDouble()
-            val rate = black / (roi.cols() * roi.rows())
-            if (rate >= BLACK_RATE_MIN && rate < BLACK_RATE_MAX) {
-                // 坐标系必须换算回原生捕获（w/h 是 ≤1920 的缩放图尺寸，直接当屏幕坐标会点偏）
-                val (cx, cy) = content.captureRectArea.centerOnNativeCapture()
-                // 与对话跳过同规则：中央固定点始终保留，开启附加点后叠加第二处；
-                // 黑屏转场时画面无 UI，多点覆盖能减少"点空"导致的卡转场
-                val points = ArrayList<Pair<Int, Int>>(2)
-                points.add(cx to cy)
-                if (settings.blackScreenCustomPosition) {
-                    val ax = (tick.screenWidth * settings.blackScreenPositionX).toInt()
-                        .coerceIn(0, tick.screenWidth)
-                    val ay = (tick.screenHeight * settings.blackScreenPositionY).toInt()
-                        .coerceIn(0, tick.screenHeight)
-                    val dx = ax - cx
-                    val dy = ay - cy
-                    if (dx * dx + dy * dy >= QUICK_SKIP_MIN_SEPARATION_PX * QUICK_SKIP_MIN_SEPARATION_PX) {
-                        points.add(ax to ay)
-                    }
+        val rate = computeBlackRate(content) ?: return
+        if (rate >= BLACK_RATE_MIN && rate < BLACK_RATE_MAX) {
+            val (cx, cy) = content.captureRectArea.centerOnNativeCapture()
+            val points = ArrayList<Pair<Int, Int>>(2)
+            points.add(cx to cy)
+            if (settings.blackScreenCustomPosition) {
+                val ax = (tick.screenWidth * settings.blackScreenPositionX).toInt()
+                    .coerceIn(0, tick.screenWidth)
+                val ay = (tick.screenHeight * settings.blackScreenPositionY).toInt()
+                    .coerceIn(0, tick.screenHeight)
+                val dx = ax - cx
+                val dy = ay - cy
+                if (dx * dx + dy * dy >= QUICK_SKIP_MIN_SEPARATION_PX * QUICK_SKIP_MIN_SEPARATION_PX) {
+                    points.add(ax to ay)
                 }
-                Log.i(TAG, "black transition detected, rate=$rate, click ${points.joinToString("/")}")
-                events?.onBlackScreenClicked(cx, cy)
-                points.forEach { (x, y) -> actions.emit(ClickAction(x, y)) }
-                lastBlackClickMs = now
             }
-        } finally {
-            roi.release()
-            mask.release()
+            Log.i(TAG, "black transition detected, rate=$rate, click ${points.joinToString("/")}")
+            events?.onBlackScreenClicked(cx, cy)
+            points.forEach { (x, y) -> actions.emit(ClickAction(x, y)) }
+            lastBlackClickMs = now
         }
     }
 
-    /** 对话判定沿用原版：仅以对话历史图标（TalkHistory 模板）命中为准。 */
+    /** 对话判定：仅以对话历史图标命中为准，OCR 兜底（1 秒节流）。 */
     private fun inDialogue(content: CaptureContent): Boolean {
         if (isTalkHistoryIcon(content, assets)) return true
 
-        // 兜底：图标淡化时 OCR 左侧状态文字，1 秒节流；节流窗口内返回上次结果防状态机抖动
         val now = System.currentTimeMillis()
         if (now - lastLabelOcrAtMs < TALK_HISTORY_LABEL_OCR_INTERVAL_MS) return lastLabelOcrHit
         lastLabelOcrAtMs = now
@@ -280,15 +471,8 @@ class AutoSkipFeature(
         return lastLabelOcrHit
     }
 
-    /**
-     * 关键词决策（对齐 PC 版 ChatOptionChoose）：
-     * 以最下方气泡为基准做固定宽度 OCR；按 Y 排序后过滤空文本、短英文数字、
-     * 以及与下一行 Y 间距过大的行；再按 select > pause > default_pause > 兜底最低项决策。
-     */
-    private fun decideOption(
-        content: CaptureContent,
-        hits: List<Region>,
-    ): Decision? {
+    /** 关键词决策（回退路径用；Rust 侧有同样的实现）。 */
+    private fun decideOption(content: CaptureContent, hits: List<Region>): Decision? {
         if (hits.isEmpty()) return null
         val region = content.captureRectArea
         val lowest = hits.maxByOrNull { it.y } ?: return null
@@ -305,50 +489,44 @@ class AutoSkipFeature(
         ro.regionOfInterest = IntRect(ocrLeft, ocrTop, ocrWidth, ocrHeight)
         val lines = region.findMulti(ro)
 
-        // 先按 Y 坐标排序，再按 PC 的顺序逐项过滤（含相邻行间距检查）
         val sorted = lines.sortedBy { it.y }
         val maxYGap = (OPTION_MAX_Y_GAP * scale).toInt()
-        val rs = sorted.filterIndexed { index, line ->
-            val t = line.text ?: return@filterIndexed false
-            if (t.isBlank()) return@filterIndexed false
-            if (t.length < 5 && t.all { it in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ." }) {
+        val filtered = sorted.filterIndexed { index, line ->
+            val text = line.text
+            if (text.isBlank()) return@filterIndexed false
+            if (text.length < 5 && text.all { it in ASCII_OPTION_CHARS }) {
                 return@filterIndexed false
             }
-            // 对齐 PC：与下一行 Y 间距过大时，当前行不属于同一组选项，直接丢弃
             if (index != sorted.size - 1) {
                 val gap = sorted[index + 1].y - line.y
-                if (gap > maxYGap) {
-                    events?.onAutoSkipLog("Y 轴偏差过大，忽略：$t")
-                    return@filterIndexed false
-                }
+                if (gap > maxYGap) return@filterIndexed false
             }
             true
         }
-        if (rs.isEmpty()) return Decision(lowest)
+        if (filtered.isEmpty()) return Decision(lowest)
 
-        events?.onOptionTextsRecognized(rs.mapNotNull { it.text })
+        events?.onOptionTextsRecognized(filtered.map { it.text })
 
-        // 对齐 PC 版优先级：同一遍历内 select 先于 pause；命中 pause 本拍不点击（交用户手动选）
-        for (item in rs) {
-            val t = item.text ?: continue
-            if (optionKeywords.select.any { t.contains(it) }) {
-                events?.onAutoSkipLog("主动选择命中：$t")
+        for (item in filtered) {
+            val text = item.text ?: continue
+            if (optionKeywords.select.any { text.contains(it) }) {
+                events?.onAutoSkipLog("主动选择命中：$text")
                 return Decision(item)
             }
-            if (optionKeywords.pause.any { t.contains(it) }) {
-                events?.onAutoSkipLog("命中暂停词，等待手动选择：$t")
+            if (optionKeywords.pause.any { text.contains(it) }) {
+                events?.onAutoSkipLog("命中暂停词，等待手动选择：$text")
                 return null
             }
         }
-        for (item in rs) {
-            val t = item.text ?: continue
-            if (optionKeywords.defaultPause.any { t.contains(it) }) {
-                events?.onAutoSkipLog("命中默认暂停词，等待手动选择：$t")
+        for (item in filtered) {
+            val text = item.text ?: continue
+            if (optionKeywords.defaultPause.any { text.contains(it) }) {
+                events?.onAutoSkipLog("命中默认暂停词，等待手动选择：$text")
                 return null
             }
         }
         events?.onAutoSkipLog("无关键词命中，点最低选项")
-        return Decision(rs.last())
+        return Decision(filtered.last())
     }
 
     companion object {
@@ -358,19 +536,15 @@ class AutoSkipFeature(
         private const val CONFIRM_TIMEOUT_MS = 1200L
         private const val OPTION_DECISION_INTERVAL_MS = 1000L
         private const val TALK_HISTORY_LABEL_OCR_INTERVAL_MS = 1000L
-
-        /** 相邻选项行 Y 间距上限（1080p 基准，对齐 PC 的 150）。 */
         private const val OPTION_MAX_Y_GAP = 150
-
-        /** 确认阶段锚点匹配容差（1080p 基准像素） */
         private const val OPTION_ANCHOR_TOLERANCE_PX = 32
-
-        /** 固定点与自定义点的最小间距；小于此值视为同一位置，只点一次 */
         private const val QUICK_SKIP_MIN_SEPARATION_PX = 32
         private const val BLACK_RATE_MIN = 0.5
         private const val BLACK_RATE_MAX = 0.98999
         private const val IDLE_LOG_INTERVAL_MS = 5000L
         private const val SKIP_LOG_INTERVAL_MS = 5000L
+        private const val ASCII_OPTION_CHARS =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ."
 
         fun selectTopChatIcon(hits: List<Region>): Region? = hits.minByOrNull { it.y }
     }

@@ -28,6 +28,7 @@ name = "bg-jni"
 version = "0.1.0"
 dependencies = [
  "bg-core",
+ "bg-recognition",
  "bg-trigger",
  "jni",
  "jni-sys",

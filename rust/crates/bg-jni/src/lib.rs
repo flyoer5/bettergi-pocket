@@ -7,6 +7,7 @@
 //! 所有能测的逻辑都在 [`engine`] / [`payload`] 里，不依赖 `JNIEnv`。
 
 pub mod engine;
+pub mod matcher;
 pub mod payload;
 
 use jni::objects::{JObject, JString};
@@ -22,7 +23,7 @@ fn read_string(env: &mut JNIEnv<'_>, value: &JString<'_>) -> Option<String> {
 }
 
 /// 把 Rust 字符串转成 `jstring`；失败返回 null。
-fn to_jstring(env: &mut JNIEnv<'_>, text: &str) -> jstring {
+pub(crate) fn to_jstring(env: &mut JNIEnv<'_>, text: &str) -> jstring {
     match env.new_string(text) {
         Ok(value) => value.into_raw(),
         Err(_) => std::ptr::null_mut(),
